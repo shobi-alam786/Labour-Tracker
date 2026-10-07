@@ -13,22 +13,17 @@ import java.net.URL
 import java.util.UUID
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.unit.sp
 import org.json.JSONObject
-import java.time.LocalDate
 
 // EDIT THESE LINES for your Kobo account and forms
 object KoboConfig {
     const val SERVER = "https://kc.kobotoolbox.org"
     const val TOKEN = "df36f81bf71b0039ef6a8f3a248bca94322567b6"
-    const val PROJECT_FORM_ID = "azCVgFYadahedgDHVwR5xV"
-    const val UPDATE_FORM_ID = "adBm3wtzUQP3gVWFjcZjPR"
-    // For admin pull: server and the asset UID of each form (from the Kobo project URL)
+    // ONE combined form (projects + daily updates). Paste its UID from the Kobo project URL.
+    const val FORM_UID = "PASTE_NEW_FORM_UID"
     const val KF_SERVER = "https://kf.kobotoolbox.org"
-    const val PROJECT_ASSET_UID = "azCVgFYadahedgDHVwR5xV"
-    const val UPDATE_ASSET_UID = "adBm3wtzUQP3gVWFjcZjPR"
+    // Admin login PIN. CHANGE THIS before you build the release APK.
+    const val ADMIN_PIN = "7391"
 }
 
 private fun esc(s: String) = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
@@ -66,14 +61,17 @@ suspend fun syncAll(dao: AppDao, block: String): String = withContext(Dispatcher
     var fail = 0
     try {
         dao.unsyncedProjects().forEach { p ->
-            val sent = post(xml(KoboConfig.PROJECT_FORM_ID, linkedMapOf(
+            val sent = post(xml(KoboConfig.FORM_UID, linkedMapOf(
+                "record_type" to "project",
                 "drr_code" to p.drrCode, "activity" to p.activity, "block" to p.block,
                 "sub_block" to p.subBlock, "start_date" to p.startDate, "end_date" to p.endDate)))
             if (sent) { dao.markProjectSynced(p.drrCode); ok++ } else fail++
         }
         dao.unsyncedUpdates().forEach { u ->
-            val sent = post(xml(KoboConfig.UPDATE_FORM_ID, linkedMapOf(
-                "drr_code" to u.drrCode, "block" to block, "date" to u.date, "status" to u.status,
+            val blk = dao.getProject(u.drrCode)?.block ?: block
+            val sent = post(xml(KoboConfig.FORM_UID, linkedMapOf(
+                "record_type" to "update",
+                "drr_code" to u.drrCode, "block" to blk, "date" to u.date, "status" to u.status,
                 "progress" to u.progress.toString(), "skilled" to u.skilled.toString(),
                 "unskilled" to u.unskilled.toString())))
             if (sent) { dao.markUpdateSynced(u.drrCode, u.date); ok++ } else fail++
@@ -89,12 +87,34 @@ fun SyncScreen(block: String, dao: AppDao) {
     val scope = rememberCoroutineScope()
     var msg by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
-    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("Sync to Kobo", style = MaterialTheme.typography.titleLarge)
+    Column(
+        Modifier.padding(16.dp).verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Text("Sync with Kobo", style = MaterialTheme.typography.titleLarge)
         Button(
             onClick = { busy = true; scope.launch { msg = syncAll(dao, block); busy = false } },
             enabled = !busy, modifier = Modifier.fillMaxWidth()
-        ) { Text(if (busy) "Sending..." else "Send now") }
+        ) { Text(if (busy) "Working..." else "Send now") }
+        Text("Sends your new projects and daily updates to Kobo.", style = MaterialTheme.typography.bodySmall)
+        HorizontalDivider()
+        OutlinedButton(
+            onClick = { busy = true; scope.launch { msg = pullData(dao, block); busy = false } },
+            enabled = !busy, modifier = Modifier.fillMaxWidth()
+        ) { Text(if (busy) "Working..." else "Restore my Block $block data") }
+        Text(
+            "Lost or changed your phone? Pick your block, then restore all your projects and daily updates from Kobo. Data not yet sent from this phone is never overwritten.",
+            style = MaterialTheme.typography.bodySmall
+        )
+        HorizontalDivider()
+        OutlinedButton(
+            onClick = { busy = true; scope.launch { dao.markAllUnsynced(); msg = syncAll(dao, block); busy = false } },
+            enabled = !busy, modifier = Modifier.fillMaxWidth()
+        ) { Text(if (busy) "Working..." else "Re-send all my data") }
+        Text(
+            "Use once after changing to the new combined Kobo form, so old data also goes to the new form.",
+            style = MaterialTheme.typography.bodySmall
+        )
         Text(msg)
     }
 }
@@ -109,28 +129,48 @@ private fun get(url: String): String {
     return t
 }
 
-// Admin: download all submissions from Kobo into the local database
-suspend fun pullAll(dao: AppDao): String = withContext(Dispatchers.IO) {
+// All submissions of the combined form, oldest first (so the newest one wins when saved in order)
+private fun fetchAll(): List<JSONObject> {
+    val out = ArrayList<JSONObject>()
+    var url: String? = "${KoboConfig.KF_SERVER}/api/v2/assets/${KoboConfig.FORM_UID}/data/?format=json&limit=1000"
+    while (url != null) {
+        val j = JSONObject(get(url))
+        val arr = j.getJSONArray("results")
+        for (i in 0 until arr.length()) out.add(arr.getJSONObject(i))
+        url = if (j.isNull("next")) null else j.optString("next").replace("http://", "https://").ifEmpty { null }
+    }
+    return out.sortedBy { it.optLong("_id") }
+}
+
+// Download from Kobo into this phone.
+// block = null -> everything (Admin).  block = "B" -> only that TM's block (restore after losing a phone).
+suspend fun pullData(dao: AppDao, block: String?): String = withContext(Dispatchers.IO) {
     var np = 0
     var nu = 0
+    var kept = 0
     try {
-        val base = "${KoboConfig.KF_SERVER}/api/v2/assets"
-        val ps = JSONObject(get("$base/${KoboConfig.PROJECT_ASSET_UID}/data/?format=json&limit=30000")).getJSONArray("results")
-        for (i in 0 until ps.length()) {
-            val o = ps.getJSONObject(i)
+        val all = fetchAll()
+        val codes = HashSet<String>()
+        for (o in all.filter { it.optString("record_type") == "project" }) {
             val code = o.optString("drr_code")
-            if (code.isEmpty()) continue
-            dao.saveProject(Project(code, o.optString("activity"), o.optString("block"),
-                o.optString("sub_block"), o.optString("start_date"), o.optString("end_date"), synced = true))
+            val blk = o.optString("block")
+            if (code.isEmpty() || (block != null && blk != block)) continue
+            codes.add(code)
+            val local = dao.getProject(code)
+            if (local != null && !local.synced) { kept++; continue }
+            dao.saveProject(Project(code, o.optString("activity"), blk, o.optString("sub_block"),
+                o.optString("start_date"), o.optString("end_date"),
+                status = local?.status ?: "Ongoing", progress = local?.progress ?: 0, synced = true))
             np++
         }
-        val us = JSONObject(get("$base/${KoboConfig.UPDATE_ASSET_UID}/data/?format=json&limit=30000")).getJSONArray("results")
-        for (i in 0 until us.length()) {
-            val o = us.getJSONObject(i)
+        for (o in all.filter { it.optString("record_type") == "update" }) {
             val code = o.optString("drr_code")
             val date = o.optString("date")
             if (code.isEmpty() || date.isEmpty()) continue
-            dao.saveUpdate(DailyUpdate(code, date, o.optString("status"),
+            if (block != null && o.optString("block") != block && code !in codes) continue
+            val local = dao.getUpdate(code, date)
+            if (local != null && !local.synced) { kept++; continue }
+            dao.saveUpdate(DailyUpdate(code, date, o.optString("status").ifEmpty { "Ongoing" },
                 o.optString("progress").toIntOrNull() ?: 0,
                 o.optString("skilled").toIntOrNull() ?: 0,
                 o.optString("unskilled").toIntOrNull() ?: 0, synced = true))
@@ -139,34 +179,5 @@ suspend fun pullAll(dao: AppDao): String = withContext(Dispatchers.IO) {
     } catch (e: Exception) {
         return@withContext "No internet or error: ${e.message}"
     }
-    "Downloaded: $np projects, $nu updates"
-}
-
-@Composable
-fun AdminScreen(dao: AppDao) {
-    val ctx = LocalContext.current
-    val scope = rememberCoroutineScope()
-    val projects by dao.allProjects().collectAsState(emptyList())
-    val updates by dao.allUpdates().collectAsState(emptyList())
-    var msg by remember { mutableStateOf("") }
-    var busy by remember { mutableStateOf(false) }
-    var date by remember { mutableStateOf(LocalDate.now().toString()) }
-    val byCode = projects.associateBy { it.drrCode }
-    val entries = updates.mapNotNull { u -> byCode[u.drrCode]?.let { u.toEntry(it) } }
-    val d = runCatching { LocalDate.parse(date) }.getOrNull()
-    val text = if (d != null) WhatsAppReport.allBlocksReport(d, entries) else "Wrong date"
-    Column(
-        Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        Text("All Blocks (Admin)", style = MaterialTheme.typography.titleLarge)
-        Button(
-            onClick = { busy = true; scope.launch { msg = pullAll(dao); busy = false } },
-            enabled = !busy, modifier = Modifier.fillMaxWidth()
-        ) { Text(if (busy) "Downloading..." else "Download all data from Kobo") }
-        Text(msg)
-        OutlinedTextField(date, { date = it }, label = { Text("Report date (yyyy-MM-dd)") }, modifier = Modifier.fillMaxWidth())
-        Text(text, fontFamily = FontFamily.Monospace, fontSize = 13.sp)
-        Button({ shareToWhatsApp(ctx, text) }, Modifier.fillMaxWidth(), enabled = d != null) { Text("Send on WhatsApp") }
-    }
+    "Downloaded: $np projects, $nu daily updates" + if (kept > 0) "  (kept $kept unsent items on this phone)" else ""
 }

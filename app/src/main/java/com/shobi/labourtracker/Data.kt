@@ -48,11 +48,23 @@ interface AppDao {
     @Query("SELECT * FROM daily_updates")
     fun allUpdates(): Flow<List<DailyUpdate>>
 
+    @Query("SELECT * FROM projects WHERE drrCode = :c")
+    suspend fun getProject(c: String): Project?
+
+    @Query("SELECT * FROM daily_updates WHERE drrCode = :c AND date = :d")
+    suspend fun getUpdate(c: String, d: String): DailyUpdate?
+
     @Query("SELECT * FROM projects WHERE synced = 0")
     suspend fun unsyncedProjects(): List<Project>
 
     @Query("SELECT * FROM daily_updates WHERE synced = 0")
     suspend fun unsyncedUpdates(): List<DailyUpdate>
+
+    @Query("UPDATE projects SET synced = 0")
+    suspend fun markAllProjectsUnsynced()
+
+    @Query("UPDATE daily_updates SET synced = 0")
+    suspend fun markAllUpdatesUnsynced()
 
     @Query("UPDATE projects SET synced = 1 WHERE drrCode = :c")
     suspend fun markProjectSynced(c: String)
@@ -60,6 +72,8 @@ interface AppDao {
     @Query("UPDATE daily_updates SET synced = 1 WHERE drrCode = :c AND date = :d")
     suspend fun markUpdateSynced(c: String, d: String)
 }
+
+suspend fun AppDao.markAllUnsynced() { markAllProjectsUnsynced(); markAllUpdatesUnsynced() }
 
 @Database(entities = [Project::class, DailyUpdate::class], version = 1)
 abstract class AppDb : RoomDatabase() {

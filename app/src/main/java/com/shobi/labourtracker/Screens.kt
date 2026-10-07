@@ -1,3 +1,5 @@
+@file:OptIn(ExperimentalMaterial3Api::class)
+
 package com.shobi.labourtracker
 
 import androidx.compose.foundation.background
@@ -91,7 +93,7 @@ fun DashboardScreen(
         }
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
             ActionCard("↗", "Summary", "View progress", { go("summary") }, Modifier.weight(1f))
-            ActionCard("☁", "Kobo sync", "Sync data", { go("sync") }, Modifier.weight(1f))
+            ActionCard("☁", "Kobo sync", "Send / restore", { go("sync") }, Modifier.weight(1f))
         }
 
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -103,7 +105,7 @@ fun DashboardScreen(
             EmptyProjectsCard { go("register") }
         } else {
             projects.take(8).forEach { project ->
-                ProjectDashboardCard(project, entries.filter { it.drrCode == project.drrCode })
+                ProjectDashboardCard(project, entries.filter { it.drrCode == project.drrCode }) { go("project:${project.drrCode}") }
             }
         }
 
@@ -146,11 +148,11 @@ private fun ActionCard(icon: String, title: String, subtitle: String, onClick: (
 }
 
 @Composable
-private fun ProjectDashboardCard(project: Project, entries: List<DailyEntry>) {
+private fun ProjectDashboardCard(project: Project, entries: List<DailyEntry>, onClick: () -> Unit) {
     val last = entries.maxByOrNull { it.date }
     val progress = last?.let { projectProgress(it) } ?: project.progress
     val status = if (progress >= 100) "Completed" else "Ongoing"
-    Surface(shape = RoundedCornerShape(22.dp), color = MaterialTheme.colorScheme.surfaceContainerLow, tonalElevation = 1.dp) {
+    Surface(onClick = onClick, shape = RoundedCornerShape(22.dp), color = MaterialTheme.colorScheme.surfaceContainerLow, tonalElevation = 1.dp) {
         Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(11.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {

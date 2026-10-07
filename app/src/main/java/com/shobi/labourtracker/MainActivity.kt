@@ -1,3 +1,5 @@
+@file:OptIn(ExperimentalMaterial3Api::class)
+
 package com.shobi.labourtracker
 
 import android.os.Bundle
@@ -8,6 +10,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.background
 import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.horizontalScroll
@@ -54,11 +58,21 @@ fun App() {
     val dao = remember { AppDb.get(ctx).dao() }
     val scope = rememberCoroutineScope()
     var block by remember { mutableStateOf(prefs.getString("block", null)) }
+    var isAdmin by remember { mutableStateOf(prefs.getBoolean("admin", false)) }
     var screen by remember { mutableStateOf("menu") }
+    var detailCode by remember { mutableStateOf("") }
+    var detailBack by remember { mutableStateOf("menu") }
 
+    if (isAdmin) {
+        AdminApp(dao) { prefs.edit().remove("admin").apply(); isAdmin = false }
+        return
+    }
     val b = block
     if (b == null) {
-        BlockPicker { block = it; prefs.edit().putString("block", it).apply() }
+        BlockPicker(
+            onPick = { block = it; prefs.edit().putString("block", it).apply() },
+            onAdmin = { prefs.edit().putBoolean("admin", true).apply(); isAdmin = true }
+        )
         return
     }
     val projects by dao.projects(b).collectAsState(emptyList())
@@ -66,30 +80,70 @@ fun App() {
     val byCode = projects.associateBy { it.drrCode }
     val entries = updates.mapNotNull { u -> byCode[u.drrCode]?.let { u.toEntry(it) } }
 
-    BackHandler(enabled = screen != "menu") { screen = "menu" }
+    BackHandler(enabled = screen != "menu") { screen = if (screen == "project") detailBack else "menu" }
     when (screen) {
-        "menu" -> DashboardScreen(b, projects, entries, { screen = it })
+        "menu" -> DashboardScreen(b, projects, entries, { s ->
+            if (s.startsWith("project:")) { detailCode = s.removePrefix("project:"); detailBack = "menu"; screen = "project" }
+            else screen = s
+        })
         "register" -> RegisterProjectScreen(b) { p -> scope.launch { dao.saveProject(p) }; screen = "menu" }
-        "update" -> DailyUpdateScreen(projects) { u -> scope.launch { dao.saveUpdate(u) }; screen = "menu" }
-        "summary" -> SummaryScreen(projects, entries) { u -> scope.launch { dao.saveUpdate(u) } }
+        "update" -> DailyUpdateScreen(projects) { u, p ->
+            scope.launch { if (p != null) dao.saveProject(p); dao.saveUpdate(u) }
+            screen = "menu"
+        }
+        "summary" -> SummaryScreen("Progress Summary", projects.sortedBy { it.subBlock }, entries) {
+            detailCode = it; detailBack = "summary"; screen = "project"
+        }
+        "project" -> {
+            val p = byCode[detailCode]
+            if (p == null) screen = "menu"
+            else ProjectDetailScreen(p, entries) { u -> scope.launch { dao.saveUpdate(u) } }
+        }
         "report" -> ReportScreen(b, entries)
         "sync" -> SyncScreen(b, dao)
-        "admin" -> AdminScreen(dao)
     }
 }
 
 @Composable
-fun BlockPicker(onPick: (String) -> Unit) {
-    Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+fun BlockPicker(onPick: (String) -> Unit, onAdmin: () -> Unit) {
+    var askPin by remember { mutableStateOf(false) }
+    var pin by remember { mutableStateOf("") }
+    var wrong by remember { mutableStateOf(false) }
+    Column(
+        Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
         Text("Select your block", style = MaterialTheme.typography.headlineSmall)
         "ABCDEFG".forEach { c ->
             Button({ onPick(c.toString()) }, Modifier.fillMaxWidth()) { Text("Block $c") }
         }
+        Spacer(Modifier.height(8.dp))
+        OutlinedButton({ askPin = true; pin = ""; wrong = false }, Modifier.fillMaxWidth()) { Text("Admin login") }
+    }
+    if (askPin) {
+        AlertDialog(
+            onDismissRequest = { askPin = false },
+            title = { Text("Admin PIN", fontWeight = FontWeight.Bold) },
+            text = {
+                OutlinedTextField(
+                    pin, { pin = it.filter(Char::isDigit).take(8); wrong = false },
+                    label = { Text("PIN") }, singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                    isError = wrong,
+                    supportingText = { if (wrong) Text("Wrong PIN") }
+                )
+            },
+            confirmButton = {
+                Button({ if (pin == KoboConfig.ADMIN_PIN) { askPin = false; onAdmin() } else wrong = true }) { Text("Login") }
+            },
+            dismissButton = { TextButton({ askPin = false }) { Text("Cancel") } }
+        )
     }
 }
 
 @Composable
-fun DailyUpdateScreen(projects: List<Project>, onSave: (DailyUpdate) -> Unit) {
+fun DailyUpdateScreen(projects: List<Project>, onSave: (DailyUpdate, Project?) -> Unit) {
     if (projects.isEmpty()) {
         Column(
             Modifier.fillMaxSize().padding(24.dp),
@@ -107,7 +161,9 @@ fun DailyUpdateScreen(projects: List<Project>, onSave: (DailyUpdate) -> Unit) {
         return
     }
 
-    var selected by remember { mutableStateOf(projects.first()) }
+    var selectedCode by remember { mutableStateOf(projects.first().drrCode) }
+    val selected = projects.firstOrNull { it.drrCode == selectedCode } ?: projects.first()
+    var endText by remember(selected.drrCode, selected.endDate) { mutableStateOf(selected.endDate) }
     var projectMenu by remember { mutableStateOf(false) }
     var date by remember { mutableStateOf(LocalDate.now()) }
     var progressText by remember { mutableStateOf("") }
@@ -172,7 +228,7 @@ fun DailyUpdateScreen(projects: List<Project>, onSave: (DailyUpdate) -> Unit) {
                                     Text("DRR ${p.drrCode}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                             },
-                            onClick = { selected = p; projectMenu = false }
+                            onClick = { selectedCode = p.drrCode; projectMenu = false }
                         )
                     }
                 }
@@ -240,6 +296,17 @@ fun DailyUpdateScreen(projects: List<Project>, onSave: (DailyUpdate) -> Unit) {
                 }
             }
 
+            // Project end date
+            OutlinedTextField(
+                value = endText,
+                onValueChange = { endText = it.trim().take(10); error = "" },
+                label = { Text("Project end date (yyyy-MM-dd)") },
+                supportingText = { Text("Optional. Empty + project completed = today's update date.") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+                leadingIcon = { Text("⚑", color = MaterialTheme.colorScheme.primary) }
+            )
+
             // Workforce cards
             Text("TODAY'S WORKFORCE", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -285,7 +352,22 @@ fun DailyUpdateScreen(projects: List<Project>, onSave: (DailyUpdate) -> Unit) {
                         p == null || p !in 0..100 -> error = "Enter progress from 0 to 100."
                         s == null || s < 0 -> error = "Enter a valid skilled worker count."
                         u == null || u < 0 -> error = "Enter a valid unskilled worker count."
-                        else -> onSave(DailyUpdate(selected.drrCode, date.toString(), if (completed || p >= 100) "Completed" else "Ongoing", p, s, u))
+                        else -> {
+                            val endRaw = endText.trim()
+                            val endParsed = if (endRaw.isEmpty()) null else runCatching { LocalDate.parse(endRaw) }.getOrNull()
+                            val startParsed = runCatching { LocalDate.parse(selected.startDate) }.getOrNull()
+                            val isDone = completed || p >= 100
+                            when {
+                                endRaw.isNotEmpty() && endParsed == null -> error = "End date must look like 2026-12-31."
+                                endParsed != null && startParsed != null && endParsed.isBefore(startParsed) ->
+                                    error = "End date cannot be before the start date."
+                                else -> {
+                                    val finalEnd = if (endRaw.isEmpty() && isDone) date.toString() else endRaw
+                                    val changed = if (finalEnd != selected.endDate) selected.copy(endDate = finalEnd, synced = false) else null
+                                    onSave(DailyUpdate(selected.drrCode, date.toString(), if (isDone) "Completed" else "Ongoing", p, s, u), changed)
+                                }
+                            }
+                        }
                     }
                 },
                 modifier = Modifier.fillMaxWidth().height(56.dp),
@@ -326,284 +408,6 @@ private fun WorkforceInputCard(
             )
         }
     }
-}
-
-@Composable
-fun SummaryScreen(
-    projects: List<Project>,
-    entries: List<DailyEntry>,
-    onSaveUpdate: (DailyUpdate) -> Unit
-) {
-    val today = LocalDate.now()
-    val dates = remember(entries) {
-        val all = entries.map { it.date }.distinct().sorted()
-        if (all.isEmpty()) listOf(today) else all
-    }
-    val latest = entries.maxByOrNull { it.date }
-    val totalWorkers = entries.sumOf { it.skilled + it.unskilled }
-    val activeProjects = projects.count { pr ->
-        val e = entries.filter { it.drrCode == pr.drrCode }.maxByOrNull { it.date }
-        (e?.progress ?: pr.progress) < 100
-    }
-    var editing by remember { mutableStateOf<DailyEntry?>(null) }
-
-    Column(
-        Modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.surface)
-            .padding(top = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
-    ) {
-        Column(Modifier.padding(horizontal = 20.dp)) {
-            Text("Progress Summary", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-            Text(
-                "Tap any date cell to edit the daily update",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-
-        Row(
-            Modifier.padding(horizontal = 20.dp).fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            SummaryMetric("Projects", projects.size.toString(), Modifier.weight(1f))
-            SummaryMetric("Active", activeProjects.toString(), Modifier.weight(1f))
-            SummaryMetric("Workers", totalWorkers.toString(), Modifier.weight(1f))
-        }
-
-        Surface(
-            modifier = Modifier.padding(horizontal = 20.dp).fillMaxWidth(),
-            shape = RoundedCornerShape(18.dp),
-            color = MaterialTheme.colorScheme.primaryContainer
-        ) {
-            Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("Latest update", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = .75f))
-                    Text(
-                        latest?.date?.toString() ?: "No updates yet",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer
-                    )
-                }
-                if (latest != null) {
-                    Text(
-                        "${latest.progress}%",
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer
-                    )
-                }
-            }
-        }
-
-        Text(
-            "DAILY PROJECT MATRIX",
-            modifier = Modifier.padding(horizontal = 20.dp),
-            style = MaterialTheme.typography.labelMedium,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.primary
-        )
-
-        if (projects.isEmpty()) {
-            Surface(
-                modifier = Modifier.padding(horizontal = 20.dp).fillMaxWidth(),
-                shape = RoundedCornerShape(22.dp),
-                color = MaterialTheme.colorScheme.surfaceContainerLow
-            ) {
-                Column(Modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("No projects yet", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    Text("Register a project and add a daily update to see it here.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
-        } else {
-            Column(
-                Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState())
-                    .padding(horizontal = 20.dp)
-            ) {
-                Row(Modifier.wrapContentWidth()) {
-                    MatrixProjectHeader()
-                    dates.forEach { date -> DateHeader(date, date == today) }
-                }
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                projects.forEachIndexed { index, project ->
-                    Row(Modifier.wrapContentWidth()) {
-                        ProjectMatrixLabel(project, index)
-                        dates.forEach { date ->
-                            val entry = entries.firstOrNull { it.drrCode == project.drrCode && it.date == date }
-                            MatrixCell(entry) { editing = it }
-                        }
-                    }
-                    if (index < projects.lastIndex) {
-                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .55f))
-                    }
-                }
-            }
-        }
-
-        Row(
-            Modifier.padding(horizontal = 20.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Text("Tip:", fontWeight = FontWeight.Bold)
-            Text("Swipe left/right to see more dates.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-    }
-
-    editing?.let { entry ->
-        EditSummaryDialog(
-            entry = entry,
-            onDismiss = { editing = null },
-            onSave = { updated ->
-                onSaveUpdate(updated)
-                editing = null
-            }
-        )
-    }
-}
-
-@Composable
-private fun SummaryMetric(title: String, value: String, modifier: Modifier) {
-    Surface(
-        modifier = modifier,
-        shape = RoundedCornerShape(18.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerLow,
-        tonalElevation = 1.dp
-    ) {
-        Column(Modifier.padding(13.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(title, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text(value, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-        }
-    }
-}
-
-private val projectColumnWidth = 190.dp
-private val dateColumnWidth = 112.dp
-
-@Composable
-private fun MatrixProjectHeader() {
-    Surface(
-        modifier = Modifier.width(projectColumnWidth).height(64.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerHighest
-    ) {
-        Column(Modifier.padding(horizontal = 14.dp), verticalArrangement = Arrangement.Center) {
-            Text("PROJECT", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-            Text("Sub-block / Activity", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
-        }
-    }
-}
-
-@Composable
-private fun DateHeader(date: LocalDate, isToday: Boolean) {
-    Surface(
-        modifier = Modifier.width(dateColumnWidth).height(64.dp),
-        color = if (isToday) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHighest
-    ) {
-        Column(Modifier.padding(horizontal = 10.dp), verticalArrangement = Arrangement.Center) {
-            Text(
-                date.dayOfWeek.name.take(3),
-                style = MaterialTheme.typography.labelSmall,
-                fontWeight = FontWeight.Bold,
-                color = if (isToday) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Text(
-                "${date.dayOfMonth.toString().padStart(2, '0')} ${date.month.name.take(3)}",
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.Bold
-            )
-            if (isToday) Text("TODAY", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
-        }
-    }
-}
-
-@Composable
-private fun ProjectMatrixLabel(project: Project, index: Int) {
-    Surface(
-        modifier = Modifier.width(projectColumnWidth).height(82.dp),
-        color = if (index % 2 == 0) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.surfaceContainerLowest
-    ) {
-        Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp), verticalArrangement = Arrangement.Center) {
-            Text(project.subBlock, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(project.activity, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text("DRR ${project.drrCode}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        }
-    }
-}
-
-@Composable
-private fun MatrixCell(entry: DailyEntry?, onClick: (DailyEntry) -> Unit) {
-    Surface(
-        modifier = Modifier.width(dateColumnWidth).height(82.dp),
-        onClick = { entry?.let(onClick) },
-        enabled = entry != null,
-        shape = RoundedCornerShape(0.dp),
-        color = if (entry == null) MaterialTheme.colorScheme.surfaceContainerLowest else MaterialTheme.colorScheme.surfaceContainerLow
-    ) {
-        if (entry == null) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("—", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.outline)
-            }
-        } else {
-            Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("${entry.progress}%", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary, modifier = Modifier.weight(1f))
-                    Text("✎", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-                }
-                LinearProgressIndicator(
-                    progress = { entry.progress.coerceIn(0, 100) / 100f },
-                    modifier = Modifier.fillMaxWidth().height(5.dp),
-                    trackColor = MaterialTheme.colorScheme.surfaceVariant
-                )
-                Text("S ${entry.skilled}  •  U ${entry.unskilled}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        }
-    }
-}
-
-@Composable
-private fun EditSummaryDialog(
-    entry: DailyEntry,
-    onDismiss: () -> Unit,
-    onSave: (DailyUpdate) -> Unit
-) {
-    var progress by remember(entry) { mutableStateOf(entry.progress.toString()) }
-    var skilled by remember(entry) { mutableStateOf(entry.skilled.toString()) }
-    var unskilled by remember(entry) { mutableStateOf(entry.unskilled.toString()) }
-    var error by remember { mutableStateOf("") }
-    val num = KeyboardOptions(keyboardType = KeyboardType.Number)
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Edit daily update", fontWeight = FontWeight.Bold) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("${entry.subBlock} • ${entry.date}", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                OutlinedTextField(progress, { progress = it }, label = { Text("Progress %") }, keyboardOptions = num, singleLine = true)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(skilled, { skilled = it }, label = { Text("Skilled") }, keyboardOptions = num, modifier = Modifier.weight(1f), singleLine = true)
-                    OutlinedTextField(unskilled, { unskilled = it }, label = { Text("Unskilled") }, keyboardOptions = num, modifier = Modifier.weight(1f), singleLine = true)
-                }
-                if (error.isNotEmpty()) Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
-            }
-        },
-        confirmButton = {
-            Button(onClick = {
-                val p = progress.toIntOrNull()
-                val s = skilled.toIntOrNull()
-                val u = unskilled.toIntOrNull()
-                if (p == null || p !in 0..100 || s == null || s < 0 || u == null || u < 0) {
-                    error = "Use valid numbers. Progress must be 0–100."
-                } else {
-                    onSave(DailyUpdate(entry.drrCode, entry.date.toString(), if (p >= 100) "Completed" else "Ongoing", p, s, u))
-                }
-            }) { Text("Save") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
-    )
 }
 
 @Composable
