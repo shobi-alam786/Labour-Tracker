@@ -15,7 +15,8 @@ data class DailyEntry(
     val drrCode: String,
     val activity: String,
     val skilled: Int,
-    val unskilled: Int
+    val unskilled: Int,
+    val progress: Int = 0
 )
 
 data class Totals(val skilled: Int, val unskilled: Int)

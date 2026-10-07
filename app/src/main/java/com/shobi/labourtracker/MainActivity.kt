@@ -5,6 +5,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.*
+import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -23,7 +24,18 @@ import java.time.LocalDate
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { MaterialTheme { Surface(Modifier.fillMaxSize()) { App() } } }
+        setContent {
+            val colors = lightColorScheme(
+                primary = Color(0xFF1769AA),
+                onPrimary = Color.White,
+                primaryContainer = Color(0xFFD7E9FF),
+                onPrimaryContainer = Color(0xFF001D35),
+                surface = Color(0xFFF8FAFC),
+                surfaceContainerLow = Color(0xFFF0F4F8),
+                surfaceVariant = Color(0xFFE1E7EF)
+            )
+            MaterialTheme(colorScheme = colors) { Surface(Modifier.fillMaxSize()) { App() } }
+        }
     }
 }
 
@@ -48,7 +60,7 @@ fun App() {
 
     BackHandler(enabled = screen != "menu") { screen = "menu" }
     when (screen) {
-        "menu" -> MenuScreen(b) { screen = it }
+        "menu" -> DashboardScreen(b, projects, entries, { screen = it })
         "register" -> RegisterProjectScreen(b) { p -> scope.launch { dao.saveProject(p) }; screen = "menu" }
         "update" -> DailyUpdateScreen(projects) { u -> scope.launch { dao.saveUpdate(u) }; screen = "menu" }
         "summary" -> SummaryScreen(projects, entries)

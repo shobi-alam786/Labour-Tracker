@@ -82,5 +82,6 @@ fun DailyUpdate.toEntry(p: Project) = DailyEntry(
     drrCode = p.drrCode,
     activity = p.activity,
     skilled = skilled,
-    unskilled = unskilled
+    unskilled = unskilled,
+    progress = progress
 )
