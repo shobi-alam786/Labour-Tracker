@@ -2,6 +2,8 @@ package com.shobi.labourtracker
 
 import android.content.Context
 import androidx.room.*
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import kotlinx.coroutines.flow.Flow
 import java.time.LocalDate
 
@@ -31,6 +33,15 @@ data class DailyUpdate(
     val synced: Boolean = false
 )
 
+// Login of one block (set by the Admin, also stored in Kobo as record_type "account")
+@Entity(tableName = "accounts")
+data class Account(
+    @PrimaryKey val block: String,
+    val email: String,
+    val password: String,       // 6 or 8 digits
+    val synced: Boolean = false
+)
+
 @Dao
 interface AppDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
@@ -47,6 +58,21 @@ interface AppDao {
 
     @Query("SELECT * FROM daily_updates")
     fun allUpdates(): Flow<List<DailyUpdate>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun saveAccount(a: Account)
+
+    @Query("SELECT * FROM accounts ORDER BY block")
+    fun accounts(): Flow<List<Account>>
+
+    @Query("SELECT * FROM accounts")
+    suspend fun accountList(): List<Account>
+
+    @Query("SELECT * FROM accounts WHERE synced = 0")
+    suspend fun unsyncedAccounts(): List<Account>
+
+    @Query("UPDATE accounts SET synced = 1 WHERE block = :b")
+    suspend fun markAccountSynced(b: String)
 
     @Query("SELECT * FROM projects WHERE drrCode = :c")
     suspend fun getProject(c: String): Project?
@@ -81,7 +107,13 @@ interface AppDao {
 
 suspend fun AppDao.markAllUnsynced() { markAllProjectsUnsynced(); markAllUpdatesUnsynced() }
 
-@Database(entities = [Project::class, DailyUpdate::class], version = 1)
+private val MIGRATION_1_2 = object : Migration(1, 2) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS `accounts` (`block` TEXT NOT NULL, `email` TEXT NOT NULL, `password` TEXT NOT NULL, `synced` INTEGER NOT NULL, PRIMARY KEY(`block`))")
+    }
+}
+
+@Database(entities = [Project::class, DailyUpdate::class, Account::class], version = 2)
 abstract class AppDb : RoomDatabase() {
     abstract fun dao(): AppDao
 
@@ -89,7 +121,7 @@ abstract class AppDb : RoomDatabase() {
         @Volatile private var inst: AppDb? = null
         fun get(c: Context): AppDb = inst ?: synchronized(this) {
             inst ?: Room.databaseBuilder(c.applicationContext, AppDb::class.java, "labour.db")
-                .build().also { inst = it }
+                .addMigrations(MIGRATION_1_2).build().also { inst = it }
         }
     }
 }

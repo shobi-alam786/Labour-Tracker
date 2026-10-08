@@ -31,12 +31,14 @@ fun AdminApp(dao: AppDao, onLogout: () -> Unit) {
     var openProject by remember { mutableStateOf<String?>(null) }
     var showReport by remember { mutableStateOf(false) }
     var showUpdate by remember { mutableStateOf(false) }
+    var showAccounts by remember { mutableStateOf(false) }
 
-    BackHandler(enabled = openProject != null || showReport || showUpdate || openBlock != null) {
+    BackHandler(enabled = openProject != null || showReport || showUpdate || showAccounts || openBlock != null) {
         when {
             openProject != null -> openProject = null
             showReport -> showReport = false
             showUpdate -> showUpdate = false
+            showAccounts -> showAccounts = false
             else -> openBlock = null
         }
     }
@@ -46,11 +48,12 @@ fun AdminApp(dao: AppDao, onLogout: () -> Unit) {
     when {
         proj != null -> ProjectDetailScreen(proj, entries, null)
         showReport -> AdminReportScreen(entries)
+        showAccounts -> AccountsScreen(dao)
         showUpdate -> ProjectUpdateScreen("ABCDEFG".map { it.toString() }, projects, entries)
         blk != null -> SummaryScreen(
             "Block $blk", projects.filter { it.block == blk }.sortedBy { it.subBlock }, entries
         ) { openProject = it }
-        else -> AdminHome(dao, projects, entries, { openBlock = it }, { showReport = true }, { showUpdate = true }, onLogout)
+        else -> AdminHome(dao, projects, entries, { openBlock = it }, { showReport = true }, { showUpdate = true }, { showAccounts = true }, onLogout)
     }
 }
 
@@ -62,6 +65,7 @@ private fun AdminHome(
     onOpenBlock: (String) -> Unit,
     onReport: () -> Unit,
     onProjectUpdate: () -> Unit,
+    onAccounts: () -> Unit,
     onLogout: () -> Unit
 ) {
     val scope = rememberCoroutineScope()
@@ -114,6 +118,7 @@ private fun AdminHome(
         )
         Button(onReport, Modifier.fillMaxWidth()) { Text("All-blocks WhatsApp report") }
         Button(onProjectUpdate, Modifier.fillMaxWidth()) { Text("Daily project update (per block)") }
+        Button(onAccounts, Modifier.fillMaxWidth()) { Text("Block accounts (email & password)") }
         OutlinedButton(onLogout, Modifier.fillMaxWidth()) { Text("Log out") }
         Spacer(Modifier.height(8.dp))
     }

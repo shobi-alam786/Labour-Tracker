@@ -11,6 +11,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.net.HttpURLConnection
 import java.net.URL
+import java.net.URLEncoder
 import java.util.UUID
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -96,7 +97,7 @@ suspend fun syncAll(dao: AppDao, block: String): String = withContext(Dispatcher
 }
 
 @Composable
-fun SyncScreen(block: String, dao: AppDao) {
+fun SyncScreen(block: String, dao: AppDao, onLogout: () -> Unit) {
     val scope = rememberCoroutineScope()
     var msg by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
@@ -137,6 +138,9 @@ fun SyncScreen(block: String, dao: AppDao) {
             style = MaterialTheme.typography.bodySmall
         )
         Text(msg)
+        HorizontalDivider()
+        OutlinedButton(onClick = onLogout, modifier = Modifier.fillMaxWidth()) { Text("Log out") }
+        Text("Data on this phone stays. Log in again with your email and password.", style = MaterialTheme.typography.bodySmall)
     }
 }
 
@@ -151,9 +155,10 @@ private fun get(url: String): String {
 }
 
 // All submissions of the combined form, oldest first (so the newest one wins when saved in order)
-private fun fetchAll(): List<JSONObject> {
+private fun fetchAll(query: String? = null): List<JSONObject> {
     val out = ArrayList<JSONObject>()
-    var url: String? = "${KoboConfig.KF_SERVER}/api/v2/assets/${KoboConfig.FORM_UID}/data/?format=json&limit=1000"
+    val q = if (query != null) "&query=" + URLEncoder.encode(query, "UTF-8") else ""
+    var url: String? = "${KoboConfig.KF_SERVER}/api/v2/assets/${KoboConfig.FORM_UID}/data/?format=json&limit=1000$q"
     while (url != null) {
         val j = JSONObject(get(url))
         val arr = j.getJSONArray("results")
@@ -163,12 +168,60 @@ private fun fetchAll(): List<JSONObject> {
     return out.sortedBy { it.optLong("_id") }
 }
 
+// ---------- Block accounts (email + password) ----------
+
+// Latest account of every block, from Kobo
+private fun fetchAccounts(): List<Account> =
+    fetchAll("{\"record_type\":\"account\"}")
+        .filter { it.optString("block").isNotEmpty() }
+        .associateBy { it.optString("block") }          // oldest first, so the newest one wins
+        .values
+        .map { Account(it.optString("block"), it.optString("email").trim().lowercase(), it.optString("password"), true) }
+
+// Admin: send new / changed accounts to Kobo
+suspend fun sendAccounts(dao: AppDao): String = withContext(Dispatchers.IO) {
+    var ok = 0
+    var err = ""
+    for (a in dao.unsyncedAccounts()) {
+        try {
+            post(xml(KoboConfig.FORM_UID, linkedMapOf(
+                "record_type" to "account", "drr_code" to "ACCOUNT-${a.block}",
+                "block" to a.block, "email" to a.email, "password" to a.password)))
+            dao.markAccountSynced(a.block); ok++
+        } catch (e: Exception) {
+            if (err.isEmpty()) err = e.message ?: "error"
+        }
+    }
+    if (err.isEmpty()) "Sent to Kobo: $ok account(s)" else "Sent: $ok. Error: $err"
+}
+
+// Block member login. Online check first (so a changed password works at once);
+// offline it falls back to the account saved on this phone at the last login.
+suspend fun login(dao: AppDao, emailRaw: String, password: String): Pair<String?, String> = withContext(Dispatchers.IO) {
+    val email = emailRaw.trim().lowercase()
+    try {
+        val a = fetchAccounts().firstOrNull { it.email == email && it.password == password }
+        if (a != null) {
+            dao.saveAccount(a)
+            return@withContext a.block to ""
+        }
+        return@withContext null to "Wrong email or password."
+    } catch (e: java.io.IOException) {
+        val a = dao.accountList().firstOrNull { it.email == email && it.password == password }
+        if (a != null) return@withContext a.block to ""
+        return@withContext null to "No internet or Kobo error (${e.message}). The first login needs internet."
+    } catch (e: Exception) {
+        return@withContext null to "Error: ${e.message}"
+    }
+}
+
 // Download from Kobo into this phone.
 // block = null -> everything (Admin).  block = "B" -> only that TM's block (restore after losing a phone).
 suspend fun pullData(dao: AppDao, block: String?): String = withContext(Dispatchers.IO) {
     var np = 0
     var nu = 0
     var kept = 0
+    var na = 0
     try {
         val all = fetchAll()
         val codes = HashSet<String>()
@@ -197,8 +250,15 @@ suspend fun pullData(dao: AppDao, block: String?): String = withContext(Dispatch
                 o.optString("unskilled").toIntOrNull() ?: 0, synced = true))
             nu++
         }
+        if (block == null) {   // Admin also gets the block accounts
+            val local = dao.accountList().associateBy { it.block }
+            for (a in fetchAccounts()) {
+                if (local[a.block]?.synced == false) { kept++; continue }
+                dao.saveAccount(a); na++
+            }
+        }
     } catch (e: Exception) {
         return@withContext "No internet or error: ${e.message}"
     }
-    "Downloaded: $np projects, $nu daily updates" + if (kept > 0) "  (kept $kept unsent items on this phone)" else ""
+    "Downloaded: $np projects, $nu daily updates" + (if (block == null) ", $na accounts" else "") + if (kept > 0) "  (kept $kept unsent items on this phone)" else ""
 }

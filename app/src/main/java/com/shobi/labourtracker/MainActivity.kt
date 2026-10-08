@@ -12,6 +12,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.horizontalScroll
@@ -73,8 +74,9 @@ fun App() {
     }
     val b = block
     if (b == null) {
-        BlockPicker(
-            onPick = { block = it; prefs.edit().putString("block", it).apply() },
+        LoginScreen(
+            dao = dao,
+            onLogin = { block = it; prefs.edit().putString("block", it).apply() },
             onAdmin = { prefs.edit().putBoolean("admin", true).apply(); isAdmin = true }
         )
         return
@@ -106,24 +108,56 @@ fun App() {
         }
         "report" -> ReportScreen(b, entries)
         "projectupdate" -> ProjectUpdateScreen(listOf(b), projects, entries)
-        "sync" -> SyncScreen(b, dao)
+        "sync" -> SyncScreen(b, dao) { prefs.edit().remove("block").apply(); block = null; screen = "menu" }
     }
 }
 
 @Composable
-fun BlockPicker(onPick: (String) -> Unit, onAdmin: () -> Unit) {
+fun LoginScreen(dao: AppDao, onLogin: (String) -> Unit, onAdmin: () -> Unit) {
+    val scope = rememberCoroutineScope()
+    var email by remember { mutableStateOf("") }
+    var pw by remember { mutableStateOf("") }
+    var show by remember { mutableStateOf(false) }
+    var busy by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf("") }
     var askPin by remember { mutableStateOf(false) }
     var pin by remember { mutableStateOf("") }
     var wrong by remember { mutableStateOf(false) }
+
     Column(
-        Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Text("Select your block", style = MaterialTheme.typography.headlineSmall)
-        "ABCDEFG".forEach { c ->
-            Button({ onPick(c.toString()) }, Modifier.fillMaxWidth()) { Text("Block $c") }
-        }
+        Spacer(Modifier.height(48.dp))
+        Text("Labour Tracker", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+        Text("Log in with the email and password from your admin.", color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(8.dp))
+        OutlinedTextField(
+            email, { email = it.trim(); error = "" }, label = { Text("Email") }, singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email), modifier = Modifier.fillMaxWidth()
+        )
+        OutlinedTextField(
+            pw, { pw = it.filter(Char::isDigit).take(8); error = "" },
+            label = { Text("Password (6 or 8 digits)") }, singleLine = true,
+            visualTransformation = if (show) VisualTransformation.None else PasswordVisualTransformation(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+            trailingIcon = { TextButton({ show = !show }) { Text(if (show) "Hide" else "Show") } },
+            modifier = Modifier.fillMaxWidth()
+        )
+        if (error.isNotEmpty()) Text(error, color = MaterialTheme.colorScheme.error)
+        Button(
+            onClick = {
+                busy = true
+                scope.launch {
+                    val (blk, msg) = login(dao, email, pw)
+                    busy = false
+                    if (blk != null) onLogin(blk) else error = msg
+                }
+            },
+            enabled = !busy && email.isNotBlank() && (pw.length == 6 || pw.length == 8),
+            modifier = Modifier.fillMaxWidth().height(52.dp)
+        ) { Text(if (busy) "Checking..." else "Log in") }
+        Spacer(Modifier.height(16.dp))
         OutlinedButton({ askPin = true; pin = ""; wrong = false }, Modifier.fillMaxWidth()) { Text("Admin login") }
     }
     if (askPin) {
