@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <group android:translateY="-8">
+        <!-- hard hat dome -->
+        <path android:fillColor="#FFFFFFFF"
+            android:pathData="M30,62C30,44 41,34 54,34C67,34 78,44 78,62Z" />
+        <!-- amber ridge -->
+        <path android:fillColor="#FFFBBF24"
+            android:pathData="M49,35C49,31 51,29 54,29C57,29 59,31 59,35L59,62L49,62Z" />
+        <!-- brim -->
+        <path android:fillColor="#FFE0F2FE"
+            android:pathData="M24,62L84,62L84,68Q84,72 80,72L28,72Q24,72 24,68Z" />
+    </group>
+    <!-- rising bars: daily labour count -->
+    <path android:fillColor="#FF7DD3FC" android:pathData="M37,88L37,82Q37,80 39,80L45,80Q47,80 47,82L47,88Z" />
+    <path android:fillColor="#FFBAE6FD" android:pathData="M49,88L49,78Q49,76 51,76L57,76Q59,76 59,78L59,88Z" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M61,88L61,74Q61,72 63,72L69,72Q71,72 71,74L71,88Z" />
+</vector>

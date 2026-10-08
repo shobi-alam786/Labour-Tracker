@@ -95,6 +95,10 @@ fun DashboardScreen(
             ActionCard("↗", "Summary", "View progress", { go("summary") }, Modifier.weight(1f))
             ActionCard("☁", "Kobo sync", "Send / restore", { go("sync") }, Modifier.weight(1f))
         }
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+            ActionCard("✉", "Project update", "Daily message", { go("projectupdate") }, Modifier.weight(1f))
+            Spacer(Modifier.weight(1f))
+        }
 
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("Projects", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
@@ -190,12 +194,11 @@ private fun EmptyProjectsCard(onRegister: () -> Unit) {
 }
 
 @Composable
-fun RegisterProjectScreen(block: String, onSave: (Project) -> Unit) {
+fun RegisterProjectScreen(block: String, existing: Map<String, Project>, onSave: (Project) -> Unit) {
     var code by remember { mutableStateOf("") }
     var activity by remember { mutableStateOf("") }
     var subBlock by remember { mutableStateOf("") }
     var start by remember { mutableStateOf(LocalDate.now().toString()) }
-    var end by remember { mutableStateOf("") }
     var error by remember { mutableStateOf("") }
     Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("Register Project - Block $block", style = MaterialTheme.typography.titleLarge)
@@ -203,12 +206,13 @@ fun RegisterProjectScreen(block: String, onSave: (Project) -> Unit) {
         OutlinedTextField(activity, { activity = it }, label = { Text("Activity type") }, modifier = Modifier.fillMaxWidth())
         OutlinedTextField(subBlock, { subBlock = it.trim().uppercase() }, label = { Text("Sub-block (e.g. A06)") }, modifier = Modifier.fillMaxWidth())
         OutlinedTextField(start, { start = it }, label = { Text("Start date (yyyy-MM-dd)") }, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(end, { end = it }, label = { Text("End date (optional)") }, modifier = Modifier.fillMaxWidth())
         if (error.isNotEmpty()) Text(error, color = MaterialTheme.colorScheme.error)
         Button(onClick = {
             val ok = code.isNotEmpty() && activity.isNotBlank() && subBlock.isNotEmpty() && runCatching { LocalDate.parse(start) }.isSuccess
+            val dup = existing[code]
             if (!ok) error = "Please fill DRR-CODE, activity, sub-block and a correct start date."
-            else onSave(Project(code, activity.trim(), block, subBlock, start, end))
+            else if (dup != null) error = "DRR-CODE $code is already registered (${dup.subBlock} - ${dup.activity}). Each project needs its own DRR-CODE."
+            else onSave(Project(code, activity.trim(), block, subBlock, start))
         }, modifier = Modifier.fillMaxWidth()) { Text("Save Project") }
     }
 }

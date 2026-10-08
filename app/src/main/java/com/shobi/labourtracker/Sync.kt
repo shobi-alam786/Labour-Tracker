@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -20,7 +21,7 @@ object KoboConfig {
     const val SERVER = "https://kc.kobotoolbox.org"
     const val TOKEN = "df36f81bf71b0039ef6a8f3a248bca94322567b6"
     // ONE combined form (projects + daily updates). Paste its UID from the Kobo project URL.
-    const val FORM_UID = "PASTE_NEW_FORM_UID"
+    const val FORM_UID = "a6NyLaFx7XLYypjjW7JXyN"
     const val KF_SERVER = "https://kf.kobotoolbox.org"
     // Admin login PIN. CHANGE THIS before you build the release APK.
     const val ADMIN_PIN = "7391"
@@ -59,27 +60,39 @@ private fun post(xml: String): Boolean {
 suspend fun syncAll(dao: AppDao, block: String): String = withContext(Dispatchers.IO) {
     var ok = 0
     var fail = 0
-    try {
-        dao.unsyncedProjects().forEach { p ->
-            val sent = post(xml(KoboConfig.FORM_UID, linkedMapOf(
+    var firstError = ""
+    var offline = false
+    for (p in dao.unsyncedProjects()) {
+        if (offline) break
+        try {
+            post(xml(KoboConfig.FORM_UID, linkedMapOf(
                 "record_type" to "project",
                 "drr_code" to p.drrCode, "activity" to p.activity, "block" to p.block,
                 "sub_block" to p.subBlock, "start_date" to p.startDate, "end_date" to p.endDate)))
-            if (sent) { dao.markProjectSynced(p.drrCode); ok++ } else fail++
+            dao.markProjectSynced(p.drrCode); ok++
+        } catch (e: java.io.IOException) {
+            offline = true; fail++; if (firstError.isEmpty()) firstError = "No internet (${e.message})"
+        } catch (e: Exception) {
+            fail++; if (firstError.isEmpty()) firstError = "Project ${p.drrCode}: ${e.message}"
         }
-        dao.unsyncedUpdates().forEach { u ->
+    }
+    for (u in dao.unsyncedUpdates()) {
+        if (offline) break
+        try {
             val blk = dao.getProject(u.drrCode)?.block ?: block
-            val sent = post(xml(KoboConfig.FORM_UID, linkedMapOf(
+            post(xml(KoboConfig.FORM_UID, linkedMapOf(
                 "record_type" to "update",
                 "drr_code" to u.drrCode, "block" to blk, "date" to u.date, "status" to u.status,
                 "progress" to u.progress.toString(), "skilled" to u.skilled.toString(),
                 "unskilled" to u.unskilled.toString())))
-            if (sent) { dao.markUpdateSynced(u.drrCode, u.date); ok++ } else fail++
+            dao.markUpdateSynced(u.drrCode, u.date); ok++
+        } catch (e: java.io.IOException) {
+            offline = true; fail++; if (firstError.isEmpty()) firstError = "No internet (${e.message})"
+        } catch (e: Exception) {
+            fail++; if (firstError.isEmpty()) firstError = "Update ${u.drrCode} ${u.date}: ${e.message}"
         }
-    } catch (e: Exception) {
-        return@withContext "No internet or error: ${e.message}"
     }
-    "Sent: $ok   Failed: $fail"
+    "Sent: $ok   Failed: $fail" + if (firstError.isNotEmpty()) "\nFirst error: $firstError" else ""
 }
 
 @Composable
@@ -87,11 +100,19 @@ fun SyncScreen(block: String, dao: AppDao) {
     val scope = rememberCoroutineScope()
     var msg by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
+    val pendingP by dao.pendingProjects().collectAsState(0)
+    val pendingU by dao.pendingUpdates().collectAsState(0)
     Column(
         Modifier.padding(16.dp).verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Text("Sync with Kobo", style = MaterialTheme.typography.titleLarge)
+        Text(
+            if (pendingP + pendingU == 0) "Everything on this phone is sent to Kobo."
+            else "Not sent yet: $pendingP projects, $pendingU daily updates",
+            fontWeight = FontWeight.Bold,
+            color = if (pendingP + pendingU == 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+        )
         Button(
             onClick = { busy = true; scope.launch { msg = syncAll(dao, block); busy = false } },
             enabled = !busy, modifier = Modifier.fillMaxWidth()

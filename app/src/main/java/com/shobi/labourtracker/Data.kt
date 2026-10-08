@@ -60,6 +60,12 @@ interface AppDao {
     @Query("SELECT * FROM daily_updates WHERE synced = 0")
     suspend fun unsyncedUpdates(): List<DailyUpdate>
 
+    @Query("SELECT COUNT(*) FROM projects WHERE synced = 0")
+    fun pendingProjects(): Flow<Int>
+
+    @Query("SELECT COUNT(*) FROM daily_updates WHERE synced = 0")
+    fun pendingUpdates(): Flow<Int>
+
     @Query("UPDATE projects SET synced = 0")
     suspend fun markAllProjectsUnsynced()
 

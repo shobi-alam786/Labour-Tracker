@@ -4,6 +4,8 @@
     <queries><package android:name="com.whatsapp" /></queries>
     <application
         android:label="Labour Tracker"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:allowBackup="true"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
         <activity android:name=".MainActivity" android:exported="true">

@@ -30,11 +30,13 @@ fun AdminApp(dao: AppDao, onLogout: () -> Unit) {
     var openBlock by remember { mutableStateOf<String?>(null) }
     var openProject by remember { mutableStateOf<String?>(null) }
     var showReport by remember { mutableStateOf(false) }
+    var showUpdate by remember { mutableStateOf(false) }
 
-    BackHandler(enabled = openProject != null || showReport || openBlock != null) {
+    BackHandler(enabled = openProject != null || showReport || showUpdate || openBlock != null) {
         when {
             openProject != null -> openProject = null
             showReport -> showReport = false
+            showUpdate -> showUpdate = false
             else -> openBlock = null
         }
     }
@@ -44,10 +46,11 @@ fun AdminApp(dao: AppDao, onLogout: () -> Unit) {
     when {
         proj != null -> ProjectDetailScreen(proj, entries, null)
         showReport -> AdminReportScreen(entries)
+        showUpdate -> ProjectUpdateScreen("ABCDEFG".map { it.toString() }, projects, entries)
         blk != null -> SummaryScreen(
             "Block $blk", projects.filter { it.block == blk }.sortedBy { it.subBlock }, entries
         ) { openProject = it }
-        else -> AdminHome(dao, projects, entries, { openBlock = it }, { showReport = true }, onLogout)
+        else -> AdminHome(dao, projects, entries, { openBlock = it }, { showReport = true }, { showUpdate = true }, onLogout)
     }
 }
 
@@ -58,6 +61,7 @@ private fun AdminHome(
     entries: List<DailyEntry>,
     onOpenBlock: (String) -> Unit,
     onReport: () -> Unit,
+    onProjectUpdate: () -> Unit,
     onLogout: () -> Unit
 ) {
     val scope = rememberCoroutineScope()
@@ -109,6 +113,7 @@ private fun AdminHome(
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Button(onReport, Modifier.fillMaxWidth()) { Text("All-blocks WhatsApp report") }
+        Button(onProjectUpdate, Modifier.fillMaxWidth()) { Text("Daily project update (per block)") }
         OutlinedButton(onLogout, Modifier.fillMaxWidth()) { Text("Log out") }
         Spacer(Modifier.height(8.dp))
     }

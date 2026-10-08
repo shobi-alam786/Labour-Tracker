@@ -6,10 +6,8 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
-
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.background
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -21,7 +19,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
-
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -33,9 +30,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-
 import kotlinx.coroutines.launch
+import java.time.Instant
 import java.time.LocalDate
+import java.time.ZoneOffset
+import java.util.Locale
+import java.time.format.DateTimeFormatter
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -81,6 +81,7 @@ fun App() {
     }
     val projects by dao.projects(b).collectAsState(emptyList())
     val updates by dao.allUpdates().collectAsState(emptyList())
+    val everyProject by dao.allProjects().collectAsState(emptyList())
     val byCode = projects.associateBy { it.drrCode }
     val entries = updates.mapNotNull { u -> byCode[u.drrCode]?.let { u.toEntry(it) } }
 
@@ -90,9 +91,9 @@ fun App() {
             if (s.startsWith("project:")) { detailCode = s.removePrefix("project:"); detailBack = "menu"; screen = "project" }
             else screen = s
         })
-        "register" -> RegisterProjectScreen(b) { p -> scope.launch { dao.saveProject(p) }; screen = "menu" }
+        "register" -> RegisterProjectScreen(b, everyProject.associateBy { it.drrCode }) { p -> scope.launch { dao.saveProject(p); syncAll(dao, b) }; screen = "menu" }
         "update" -> DailyUpdateScreen(projects) { u, p ->
-            scope.launch { if (p != null) dao.saveProject(p); dao.saveUpdate(u) }
+            scope.launch { if (p != null) dao.saveProject(p); dao.saveUpdate(u); syncAll(dao, b) }
             screen = "menu"
         }
         "summary" -> SummaryScreen("Progress Summary", projects.sortedBy { it.subBlock }, entries) {
@@ -101,9 +102,10 @@ fun App() {
         "project" -> {
             val p = byCode[detailCode]
             if (p == null) screen = "menu"
-            else ProjectDetailScreen(p, entries) { u -> scope.launch { dao.saveUpdate(u) } }
+            else ProjectDetailScreen(p, entries) { u -> scope.launch { dao.saveUpdate(u); syncAll(dao, b) } }
         }
         "report" -> ReportScreen(b, entries)
+        "projectupdate" -> ProjectUpdateScreen(listOf(b), projects, entries)
         "sync" -> SyncScreen(b, dao)
     }
 }
@@ -177,7 +179,13 @@ fun DailyUpdateScreen(projects: List<Project>, onSave: (DailyUpdate, Project?) -
     var error by remember { mutableStateOf("") }
     val scroll = rememberScrollState()
     val numberKeyboard = KeyboardOptions(keyboardType = KeyboardType.Number)
-    val recentDates = remember { (-2..2).map { LocalDate.now().plusDays(it.toLong()) } }
+    var showDatePicker by remember { mutableStateOf(false) }
+    val dateFormat = remember { DateTimeFormatter.ofPattern("EEE, dd MMM yyyy", Locale.ENGLISH) }
+    fun dateNote(d: LocalDate) = when (d) {
+        LocalDate.now() -> "Today"
+        LocalDate.now().minusDays(1) -> "Yesterday"
+        else -> ""
+    }
 
     Column(
         Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface)
@@ -238,36 +246,52 @@ fun DailyUpdateScreen(projects: List<Project>, onSave: (DailyUpdate, Project?) -
                 }
             }
 
-            // Date strip
+            // Date: tap to open the calendar
             Text("DATE", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-            Row(
-                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            Surface(
+                onClick = { showDatePicker = true },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(20.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerLow,
+                tonalElevation = 1.dp
             ) {
-                recentDates.forEach { d ->
-                    val isSelected = d == date
-                    Surface(
-                        onClick = { date = d; error = "" },
-                        shape = RoundedCornerShape(16.dp),
-                        color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainerLow,
-                        tonalElevation = if (isSelected) 0.dp else 1.dp
-                    ) {
-                        Column(Modifier.width(68.dp).padding(vertical = 10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text(d.dayOfWeek.name.take(3), style = MaterialTheme.typography.labelSmall, color = if (isSelected) Color.White.copy(alpha = .8f) else MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold)
-                            Text(d.dayOfMonth.toString(), style = MaterialTheme.typography.titleMedium, color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold)
-                            Text(d.month.name.take(3), style = MaterialTheme.typography.labelSmall, color = if (isSelected) Color.White.copy(alpha = .8f) else MaterialTheme.colorScheme.onSurfaceVariant)
+                Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Surface(shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.primaryContainer) {
+                        Text("▣", Modifier.padding(horizontal = 13.dp, vertical = 10.dp), fontSize = 20.sp, color = MaterialTheme.colorScheme.primary)
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(date.format(dateFormat), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        if (dateNote(date).isNotEmpty()) {
+                            Text(dateNote(date), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
                         }
                     }
+                    Text("⌄", fontSize = 24.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
-            OutlinedTextField(
-                value = date.toString(),
-                onValueChange = { value -> runCatching { LocalDate.parse(value) }.getOrNull()?.let { date = it }; if (value.length >= 8) error = "" },
-                label = { Text("Date (yyyy-MM-dd)") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-                leadingIcon = { Text("▣", color = MaterialTheme.colorScheme.primary) }
-            )
+            if (showDatePicker) {
+                val pickerState = rememberDatePickerState(
+                    initialSelectedDateMillis = date.atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli(),
+                    selectableDates = object : SelectableDates {
+                        // no future dates
+                        override fun isSelectableDate(utcTimeMillis: Long) =
+                            !Instant.ofEpochMilli(utcTimeMillis).atZone(ZoneOffset.UTC).toLocalDate().isAfter(LocalDate.now())
+                    }
+                )
+                DatePickerDialog(
+                    onDismissRequest = { showDatePicker = false },
+                    confirmButton = {
+                        TextButton({
+                            pickerState.selectedDateMillis?.let {
+                                date = Instant.ofEpochMilli(it).atZone(ZoneOffset.UTC).toLocalDate()
+                                error = ""
+                            }
+                            showDatePicker = false
+                        }) { Text("OK") }
+                    },
+                    dismissButton = { TextButton({ showDatePicker = false }) { Text("CANCEL") } }
+                ) { DatePicker(state = pickerState) }
+            }
 
             // Progress card
             Surface(shape = RoundedCornerShape(22.dp), color = MaterialTheme.colorScheme.surfaceContainerLow, tonalElevation = 1.dp) {
