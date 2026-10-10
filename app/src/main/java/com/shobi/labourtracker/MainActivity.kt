@@ -52,6 +52,7 @@ import java.time.format.DateTimeFormatter
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        KoboConfig.init(this)
         ReminderNotifier.ensureChannel(this)
         setContent { LabourTheme { Surface(Modifier.fillMaxSize()) { App() } } }
     }
@@ -83,12 +84,18 @@ fun App() {
     var detailCode by remember { mutableStateOf("") }
     var detailBack by remember { mutableStateOf("menu") }
     var listFilter by remember { mutableStateOf(StatusFilter.All) }
+    var showSetup by remember { mutableStateOf(!KoboConfig.configured) }
 
     // Android 13+: ask once for the notification permission (needed to show the 9:30 reminder).
     val notifLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
     if (isAdmin) {
         AdminApp(dao) { prefs.edit().remove("admin").apply(); isAdmin = false }
+        return
+    }
+    // First run (or Kobo cleared): set up Kobo first, then log in.
+    if (showSetup) {
+        SetupScreen(onDone = { showSetup = false }, onCancel = if (KoboConfig.configured) ({ showSetup = false }) else null)
         return
     }
     val b = block
@@ -207,7 +214,7 @@ fun App() {
                 "report" -> ReportScreen(b, entries)
                 "projectupdate" -> ProjectUpdateScreen(listOf(b), projects, entries)
                 "reminder" -> ReminderScreen()
-                "sync" -> SyncScreen(b, dao) { prefs.edit().remove("block").apply(); block = null; screen = "menu" }
+                "sync" -> SyncScreen(b, dao, { prefs.edit().remove("block").apply(); block = null; screen = "menu" }, { showSetup = true })
             }
         }
     }

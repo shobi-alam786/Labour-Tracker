@@ -35,9 +35,11 @@ fun AdminApp(dao: AppDao, onLogout: () -> Unit) {
     var showReport by remember { mutableStateOf(false) }
     var showUpdate by remember { mutableStateOf(false) }
     var showAccounts by remember { mutableStateOf(false) }
+    var showSetup by remember { mutableStateOf(false) }
 
-    BackHandler(enabled = openProject != null || showReport || showUpdate || showAccounts || openBlock != null) {
+    BackHandler(enabled = openProject != null || showReport || showUpdate || showAccounts || showSetup || openBlock != null) {
         when {
+            showSetup -> showSetup = false
             openProject != null -> openProject = null
             showReport -> showReport = false
             showUpdate -> showUpdate = false
@@ -49,6 +51,7 @@ fun AdminApp(dao: AppDao, onLogout: () -> Unit) {
     val proj = openProject?.let { byCode[it] }
     val blk = openBlock
     when {
+        showSetup -> SetupScreen(onDone = { showSetup = false }, onCancel = { showSetup = false })
         proj != null -> ProjectDetailScreen(proj, entries, null)
         showReport -> AdminReportScreen(entries)
         showAccounts -> AccountsScreen(dao)
@@ -56,7 +59,7 @@ fun AdminApp(dao: AppDao, onLogout: () -> Unit) {
         blk != null -> SummaryScreen(
             "Block $blk", projects.filter { it.block == blk }.sortedBy { it.subBlock }, entries
         ) { openProject = it }
-        else -> AdminHome(dao, projects, entries, { openBlock = it }, { showReport = true }, { showUpdate = true }, { showAccounts = true }, onLogout)
+        else -> AdminHome(dao, projects, entries, { openBlock = it }, { showReport = true }, { showUpdate = true }, { showAccounts = true }, { showSetup = true }, onLogout)
     }
 }
 
@@ -69,6 +72,7 @@ private fun AdminHome(
     onReport: () -> Unit,
     onProjectUpdate: () -> Unit,
     onAccounts: () -> Unit,
+    onKoboSetup: () -> Unit,
     onLogout: () -> Unit
 ) {
     val scope = rememberCoroutineScope()
@@ -122,6 +126,7 @@ private fun AdminHome(
         Button(onReport, Modifier.fillMaxWidth()) { Text("All-blocks WhatsApp report") }
         Button(onProjectUpdate, Modifier.fillMaxWidth()) { Text("Daily project update (per block)") }
         Button(onAccounts, Modifier.fillMaxWidth()) { Text("Block accounts (email & password)") }
+        Button(onKoboSetup, Modifier.fillMaxWidth()) { Text("Kobo setup (server, token, PIN)") }
         OutlinedButton(onLogout, Modifier.fillMaxWidth()) { Text("Log out") }
         Spacer(Modifier.height(8.dp))
     }

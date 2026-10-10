@@ -39,10 +39,6 @@ android {
     }
 }
 
-if (secret("KOBO_TOKEN").isEmpty()) {
-    logger.warn("WARNING: KOBO_TOKEN is not set (local.properties). The app will build, but Kobo login and sync will not work. See README.md.")
-}
-
 dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.activity:activity-compose:1.9.2")

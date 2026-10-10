@@ -2,21 +2,17 @@
 
 Offline-first Android app (Kotlin, Jetpack Compose, Material 3, Room) for daily labour tracking with KoboToolbox sync.
 
-## Before you build (required, once)
+## First run: Kobo setup, then login
 
-Kobo token and admin PIN are no longer in the source code. Add them to `local.properties`
-(project root; Android Studio already created it with `sdk.dir`; it is git-ignored):
-
-```
-KOBO_TOKEN=your-NEW-kobo-api-token
-ADMIN_PIN=your-new-admin-pin
-```
-
-Without `KOBO_TOKEN` the app builds, but login and sync show "Kobo token is not set". Without `ADMIN_PIN`, admin login is off.
-For GitHub Actions add repository secrets `KOBO_TOKEN` and `ADMIN_PIN`.
+No secrets are in the source code. On first start the app opens **Kobo setup**:
+Server URL, Project / Asset UID, API token and an Admin PIN (4-8 digits). Use **Test connection**, then **Save**.
+Then log in. Block members (email + 6/8-digit password) are created by the Admin: *Admin login > Block accounts*.
+Kobo settings can be changed later from *Admin login > Kobo setup*. Each phone needs the setup once; values stay on that phone.
 
 > The old token and PIN were visible in the public GitHub repo. Regenerate the token in KoboToolbox
-> (Account settings > Security) and choose a new PIN. Keeping a token out of the repo does not hide it inside an APK.
+> (Account settings > Security) and choose a new PIN. A token typed on a phone is stored in the app's private storage, not encrypted.
+
+Optional build-time fallback: `KOBO_TOKEN=` and `ADMIN_PIN=` in `local.properties` (or GitHub secrets) pre-fill the setup.
 
 ## Build
 

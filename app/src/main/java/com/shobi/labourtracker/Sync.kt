@@ -21,19 +21,61 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.Alignment
 import org.json.JSONObject
 
-// Kobo settings.
-// The API token and the admin PIN are NOT stored in the source code any more. They are injected at build
-// time from local.properties (or environment variables) - see README.md - and end up in BuildConfig.
+// Kobo settings. Nothing secret is stored in the source code.
+// Values are entered once in the app (Setup screen) and kept in this phone's private storage.
+// Build-time values from local.properties (BuildConfig) are only a fallback.
 object KoboConfig {
-    const val SERVER = "https://kc.kobotoolbox.org"
-    val TOKEN: String get() = BuildConfig.KOBO_TOKEN
-    // ONE combined form (projects + daily updates). Paste its UID from the Kobo project URL.
-    const val FORM_UID = "a6NyLaFx7XLYypjjW7JXyN"
-    const val KF_SERVER = "https://kf.kobotoolbox.org"
-    // Admin login PIN (from local.properties). Empty = admin login is switched off in this build.
-    val ADMIN_PIN: String get() = BuildConfig.ADMIN_PIN
+    private const val DEFAULT_KF = "https://kf.kobotoolbox.org"
+    // ONE combined form (projects + daily updates). Used until another UID is saved in Setup.
+    const val DEFAULT_FORM_UID = "a6NyLaFx7XLYypjjW7JXyN"
+
+    private var prefs: android.content.SharedPreferences? = null
+    fun init(ctx: android.content.Context) {
+        prefs = ctx.applicationContext.getSharedPreferences("kobo_config", android.content.Context.MODE_PRIVATE)
+    }
+    private fun stored(k: String): String = prefs?.getString(k, null)?.trim().orEmpty()
+
+    val KF_SERVER: String get() = stored("kf_server").ifEmpty { DEFAULT_KF }.trimEnd('/')
+    // Submissions go to the "kc." host that belongs to the same server.
+    val SERVER: String get() = KF_SERVER.replace("//kf.", "//kc.")
+    val FORM_UID: String get() = stored("form_uid").ifEmpty { DEFAULT_FORM_UID }
+    val TOKEN: String get() = stored("token").ifEmpty { BuildConfig.KOBO_TOKEN }
+    // Empty = admin login is switched off.
+    val ADMIN_PIN: String get() = stored("admin_pin").ifEmpty { BuildConfig.ADMIN_PIN }
     val configured: Boolean get() = TOKEN.isNotBlank()
-    const val MISSING_TOKEN = "Kobo token is not set in this build. Add KOBO_TOKEN to local.properties and rebuild (see README)."
+    const val MISSING_TOKEN = "Kobo is not set up on this phone yet. Open Kobo setup and enter the server, form UID and API token."
+
+    fun save(kfServer: String, formUid: String, token: String, adminPin: String) {
+        prefs?.edit()
+            ?.putString("kf_server", kfServer.trim())
+            ?.putString("form_uid", formUid.trim())
+            ?.putString("token", token.trim())
+            ?.putString("admin_pin", adminPin.trim())
+            ?.apply()
+    }
+    fun clear() { prefs?.edit()?.clear()?.apply() }
+}
+
+// Checks server + form UID + token without changing any data.
+suspend fun testKoboConnection(kf: String, uid: String, token: String): Pair<Boolean, String> = withContext(Dispatchers.IO) {
+    try {
+        val c = URL("${kf.trim().trimEnd('/')}/api/v2/assets/${uid.trim()}/?format=json").openConnection() as HttpURLConnection
+        c.setRequestProperty("Authorization", "Token ${token.trim()}")
+        c.connectTimeout = 15000
+        c.readTimeout = 20000
+        val code = c.responseCode
+        c.disconnect()
+        when (code) {
+            200 -> true to "Connected. The form was found."
+            401, 403 -> false to "The token was refused (HTTP $code). Check the API token."
+            404 -> false to "Form not found (HTTP 404). Check the server and the Project / Asset UID."
+            else -> false to "Kobo answered HTTP $code."
+        }
+    } catch (e: java.io.IOException) {
+        false to "No internet or wrong server (${e.message})"
+    } catch (e: Exception) {
+        false to "Error: ${e.message}"
+    }
 }
 
 private fun esc(s: String) = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
@@ -121,7 +163,7 @@ private fun syncFailed(msg: String): Boolean =
         Regex("Failed: [1-9]").containsMatchIn(msg)
 
 @Composable
-fun SyncScreen(block: String, dao: AppDao, onLogout: () -> Unit) {
+fun SyncScreen(block: String, dao: AppDao, onLogout: () -> Unit, onSetup: (() -> Unit)? = null) {
     val scope = rememberCoroutineScope()
     var msg by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
@@ -140,7 +182,10 @@ fun SyncScreen(block: String, dao: AppDao, onLogout: () -> Unit) {
                 style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
-        if (!KoboConfig.configured) MessageBanner(BannerKind.Error, KoboConfig.MISSING_TOKEN)
+        if (!KoboConfig.configured) {
+            MessageBanner(BannerKind.Error, KoboConfig.MISSING_TOKEN)
+            if (onSetup != null) Button(onClick = onSetup, modifier = Modifier.fillMaxWidth().height(52.dp), shape = RoundedCornerShape(16.dp)) { Text("Open Kobo setup") }
+        }
         if (pending == 0) MessageBanner(BannerKind.Success, "Everything on this phone is sent to Kobo.")
         else MessageBanner(BannerKind.Info, "Not sent yet: $pendingP projects, $pendingU daily updates")
 
