@@ -143,7 +143,7 @@ fun SummaryScreen(
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Metric("Projects", stats.size.toString(), Modifier.weight(1f))
-            Metric("Active", stats.count { it.progress < 100 }.toString(), Modifier.weight(1f))
+            Metric("Active", stats.count { it.project.projectStatus() != ProjectStatus.Completed }.toString(), Modifier.weight(1f))
             Metric("Labour", stats.sumOf { it.total }.toString(), Modifier.weight(1f))
         }
         TableCard("▦", "Project Summary") {
@@ -157,7 +157,7 @@ fun SummaryScreen(
             stats.forEach { s ->
                 TableRow(
                     listOf(s.project.subBlock.ifBlank { "-" }, s.skilled.toString(), s.unskilled.toString(), s.total.toString()),
-                    w, sub = "${s.project.activity} • ${s.progress}%",
+                    w, sub = "${s.project.activity} • ${s.progress}% • ${s.project.projectStatus().label}",
                     onClick = { onOpenProject(s.project.drrCode) }
                 )
             }
@@ -178,7 +178,9 @@ fun SummaryScreen(
 fun ProjectDetailScreen(
     project: Project,
     allEntries: List<DailyEntry>,
-    onEdit: ((DailyUpdate) -> Unit)?
+    onEdit: ((DailyUpdate) -> Unit)?,
+    onMarkCompleted: (() -> Unit)? = null,   // null = read-only (Admin)
+    onReopen: (() -> Unit)? = null
 ) {
     val entries = remember(project, allEntries) {
         allEntries.filter { it.drrCode == project.drrCode }.sortedBy { it.date }
@@ -187,7 +189,9 @@ fun ProjectDetailScreen(
     val days = stat.days.coerceAtLeast(1)
     fun avg(n: Int) = String.format(Locale.ENGLISH, "%.1f", n.toFloat() / days)
     var editing by remember { mutableStateOf<DailyEntry?>(null) }
-    val done = stat.progress >= 100
+    var confirmComplete by remember { mutableStateOf(false) }
+    var confirmReopen by remember { mutableStateOf(false) }
+    val status = project.projectStatus()   // the SAVED status, same value as on the dashboard and list
 
     Column(
         Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface)
@@ -208,7 +212,10 @@ fun ProjectDetailScreen(
                 InfoLine("Block / Sub-block", "${project.block} / ${project.subBlock}")
                 InfoLine("Start date", project.startDate)
                 InfoLine("End date", project.endDate.ifBlank { "Not set" })
-                InfoLine("Status", if (done) "Completed" else "Ongoing")
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Status", Modifier.weight(1f), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
+                    StatusChip(status)
+                }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("${stat.progress}%", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                     Spacer(Modifier.width(10.dp))
@@ -220,6 +227,24 @@ fun ProjectDetailScreen(
                 }
                 Spacer(Modifier.height(4.dp))
             }
+        }
+
+        if (onMarkCompleted != null && status != ProjectStatus.Completed) {
+            if (stat.progress >= 100) {
+                MessageBanner(BannerKind.Info, "The latest update shows 100%. The project stays ${status.label} until you mark it completed.")
+            }
+            Button(
+                onClick = { confirmComplete = true },
+                modifier = Modifier.fillMaxWidth().height(52.dp),
+                shape = RoundedCornerShape(16.dp)
+            ) { Text("Mark project as completed", fontWeight = FontWeight.Bold) }
+        }
+        if (onReopen != null && status == ProjectStatus.Completed) {
+            OutlinedButton(
+                onClick = { confirmReopen = true },
+                modifier = Modifier.fillMaxWidth().height(52.dp),
+                shape = RoundedCornerShape(16.dp)
+            ) { Text("Reopen project", fontWeight = FontWeight.Bold) }
         }
 
         val w1 = listOf(1.6f, 1f, 1f)
@@ -255,6 +280,24 @@ fun ProjectDetailScreen(
 
     editing?.let { entry ->
         EditDayDialog(entry, { editing = null }) { u -> onEdit?.invoke(u); editing = null }
+    }
+    if (confirmComplete) {
+        AlertDialog(
+            onDismissRequest = { confirmComplete = false },
+            title = { Text("Mark as completed?", fontWeight = FontWeight.Bold) },
+            text = { Text("${project.subBlock} - ${project.activity} (DRR ${project.drrCode}) will be Completed. The daily reminder will no longer check it.") },
+            confirmButton = { Button({ confirmComplete = false; onMarkCompleted?.invoke() }) { Text("Mark completed") } },
+            dismissButton = { TextButton({ confirmComplete = false }) { Text("Cancel") } }
+        )
+    }
+    if (confirmReopen) {
+        AlertDialog(
+            onDismissRequest = { confirmReopen = false },
+            title = { Text("Reopen project?", fontWeight = FontWeight.Bold) },
+            text = { Text("The project becomes active again and is checked by the daily reminder.") },
+            confirmButton = { Button({ confirmReopen = false; onReopen?.invoke() }) { Text("Reopen") } },
+            dismissButton = { TextButton({ confirmReopen = false }) { Text("Cancel") } }
+        )
     }
 }
 

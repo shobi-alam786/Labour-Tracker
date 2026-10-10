@@ -27,10 +27,10 @@ fun ProjectUpdateScreen(blocks: List<String>, projects: List<Project>, entries: 
     val ctx = LocalContext.current
     val clipboard = LocalClipboardManager.current
     var block by remember { mutableStateOf(blocks.first()) }
-    var date by remember { mutableStateOf(LocalDate.now()) }
+    var date by remember { mutableStateOf(AppTime.today()) }
     var dateMenu by remember { mutableStateOf(false) }
     var copied by remember { mutableStateOf(false) }
-    val dateOptions = remember { (0..30).map { LocalDate.now().minusDays(it.toLong()) } }
+    val dateOptions = remember { (0..30).map { AppTime.today().minusDays(it.toLong()) } }
     val dateFormat = remember { DateTimeFormatter.ofPattern("EEE, dd MMM yyyy", Locale.ENGLISH) }
     val text = remember(block, date, projects, entries) {
         ProjectUpdateMessage.build(date, projects.filter { it.block == block }, entries)

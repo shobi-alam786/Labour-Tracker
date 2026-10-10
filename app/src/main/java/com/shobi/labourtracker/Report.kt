@@ -114,7 +114,10 @@ object ProjectUpdateMessage {
             val es = by[p.drrCode].orEmpty().sortedBy { it.date }
             val upTo = es.filter { !it.date.isAfter(date) }
             val progress = (upTo.lastOrNull()?.progress ?: 0).coerceIn(0, 100)
-            val done = progress >= 100
+            // Done = 100% (as before) OR the project was marked Completed with an end date on/before this date.
+            val markedDone = p.projectStatus() == ProjectStatus.Completed &&
+                (runCatching { LocalDate.parse(p.endDate) }.getOrNull()?.let { !it.isAfter(date) } ?: false)
+            val done = progress >= 100 || markedDone
             val today = es.filter { it.date == date }
             val doneDate = if (done) {
                 runCatching { LocalDate.parse(p.endDate) }.getOrNull()

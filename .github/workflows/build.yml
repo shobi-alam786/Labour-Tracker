@@ -15,6 +15,9 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with: { gradle-version: 8.9 }
       - run: gradle assembleDebug
+        env:
+          KOBO_TOKEN: ${{ secrets.KOBO_TOKEN }}
+          ADMIN_PIN: ${{ secrets.ADMIN_PIN }}
       - run: cp app/build/outputs/apk/debug/app-debug.apk LabourTracker-${{ github.ref_name }}.apk
       - uses: actions/upload-artifact@v4
         with: { name: apk, path: LabourTracker-*.apk }

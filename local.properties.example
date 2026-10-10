@@ -1,0 +1,4 @@
+# Copy these lines into local.properties (same folder as settings.gradle.kts). local.properties is git-ignored.
+# Android Studio already created local.properties with sdk.dir - just ADD these two lines to it.
+KOBO_TOKEN=paste-your-NEW-kobo-api-token-here
+ADMIN_PIN=choose-a-new-admin-pin

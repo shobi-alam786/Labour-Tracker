@@ -2,10 +2,14 @@
 
 package com.shobi.labourtracker
 
+import android.Manifest
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.background
 import androidx.compose.ui.graphics.Color
@@ -20,6 +24,12 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -31,6 +41,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.LocalDate
@@ -41,19 +52,22 @@ import java.time.format.DateTimeFormatter
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent {
-            val colors = lightColorScheme(
-                primary = Color(0xFF1769AA),
-                onPrimary = Color.White,
-                primaryContainer = Color(0xFFD7E9FF),
-                onPrimaryContainer = Color(0xFF001D35),
-                surface = Color(0xFFF8FAFC),
-                surfaceContainerLow = Color(0xFFF0F4F8),
-                surfaceVariant = Color(0xFFE1E7EF)
-            )
-            MaterialTheme(colorScheme = colors) { Surface(Modifier.fillMaxSize()) { App() } }
-        }
+        ReminderNotifier.ensureChannel(this)
+        setContent { LabourTheme { Surface(Modifier.fillMaxSize()) { App() } } }
     }
+}
+
+private fun titleFor(screen: String): String = when (screen) {
+    "projects" -> "Projects"
+    "update" -> "Daily update"
+    "register" -> "Register project"
+    "summary" -> "Progress summary"
+    "project" -> "Project details"
+    "report" -> "WhatsApp report"
+    "projectupdate" -> "Daily project message"
+    "sync" -> "Kobo sync"
+    "reminder" -> "Daily reminder"
+    else -> ""
 }
 
 @Composable
@@ -62,11 +76,16 @@ fun App() {
     val prefs = remember { ctx.getSharedPreferences("app", 0) }
     val dao = remember { AppDb.get(ctx).dao() }
     val scope = rememberCoroutineScope()
+    val snackbar = remember { SnackbarHostState() }
     var block by remember { mutableStateOf(prefs.getString("block", null)) }
     var isAdmin by remember { mutableStateOf(prefs.getBoolean("admin", false)) }
     var screen by remember { mutableStateOf("menu") }
     var detailCode by remember { mutableStateOf("") }
     var detailBack by remember { mutableStateOf("menu") }
+    var listFilter by remember { mutableStateOf(StatusFilter.All) }
+
+    // Android 13+: ask once for the notification permission (needed to show the 9:30 reminder).
+    val notifLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
     if (isAdmin) {
         AdminApp(dao) { prefs.edit().remove("admin").apply(); isAdmin = false }
@@ -81,34 +100,116 @@ fun App() {
         )
         return
     }
-    val projects by dao.projects(b).collectAsState(emptyList())
+
+    // Every time the app opens for a logged-in block: keep exactly one 9:30 alarm scheduled, fix statuses
+    // that were saved before this version, and (silently) catch up if the 9:30 check was missed.
+    LaunchedEffect(b) {
+        ReminderScheduler.scheduleNext(ctx)
+        StatusEngine.backfillCompletedOnce(dao, prefs)
+        StatusEngine.runDailyCheck(dao, b, AppTime.now())
+        if (ReminderHealth.needsNotificationPermission(ctx) && !ReminderPrefs.notificationAsked(ctx)) {
+            ReminderPrefs.setNotificationAsked(ctx)
+            notifLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+
+    val projectsState by dao.projects(b).collectAsState(null)
+    val projects = projectsState ?: emptyList()
+    val loading = projectsState == null
     val updates by dao.allUpdates().collectAsState(emptyList())
     val everyProject by dao.allProjects().collectAsState(emptyList())
     val byCode = projects.associateBy { it.drrCode }
     val entries = updates.mapNotNull { u -> byCode[u.drrCode]?.let { u.toEntry(it) } }
 
+    fun go(s: String) {
+        when {
+            s.startsWith("project:") -> { detailCode = s.removePrefix("project:"); detailBack = screen; screen = "project" }
+            s.startsWith("projects:") -> {
+                listFilter = StatusFilter.values().firstOrNull { it.name == s.removePrefix("projects:") } ?: StatusFilter.All
+                screen = "projects"
+            }
+            s == "projects" -> { listFilter = StatusFilter.All; screen = "projects" }
+            else -> screen = s
+        }
+    }
+
+    // After a save: try to send, then tell the person what happened (works offline too).
+    fun saveThen(work: suspend () -> Unit) {
+        scope.launch {
+            work()
+            val result = syncAll(dao, b)
+            snackbar.showSnackbar(friendlySyncMessage(result))
+        }
+    }
+
     BackHandler(enabled = screen != "menu") { screen = if (screen == "project") detailBack else "menu" }
-    when (screen) {
-        "menu" -> DashboardScreen(b, projects, entries, { s ->
-            if (s.startsWith("project:")) { detailCode = s.removePrefix("project:"); detailBack = "menu"; screen = "project" }
-            else screen = s
-        })
-        "register" -> RegisterProjectScreen(b, everyProject.associateBy { it.drrCode }) { p -> scope.launch { dao.saveProject(p); syncAll(dao, b) }; screen = "menu" }
-        "update" -> DailyUpdateScreen(projects) { u, p ->
-            scope.launch { if (p != null) dao.saveProject(p); dao.saveUpdate(u); syncAll(dao, b) }
-            screen = "menu"
+
+    val tabs = listOf("menu", "projects", "update", "sync")
+    Scaffold(
+        snackbarHost = { SnackbarHost(snackbar) },
+        topBar = {
+            if (screen != "menu") {
+                TopAppBar(
+                    title = { Text(titleFor(screen), fontWeight = FontWeight.Bold) },
+                    navigationIcon = {
+                        IconButton(onClick = { screen = if (screen == "project") detailBack else "menu" }) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        }
+                    }
+                )
+            }
+        },
+        bottomBar = {
+            if (screen in tabs) {
+                NavigationBar {
+                    NavigationBarItem(selected = screen == "menu", onClick = { screen = "menu" },
+                        icon = { Icon(Icons.Filled.Home, null) }, label = { Text("Home") })
+                    NavigationBarItem(selected = screen == "projects", onClick = { go("projects") },
+                        icon = { Icon(Icons.AutoMirrored.Filled.List, null) }, label = { Text("Projects") })
+                    NavigationBarItem(selected = screen == "update", onClick = { screen = "update" },
+                        icon = { Icon(Icons.Filled.Edit, null) }, label = { Text("Update") })
+                    NavigationBarItem(selected = screen == "sync", onClick = { screen = "sync" },
+                        icon = { Icon(Icons.Filled.Refresh, null) }, label = { Text("Sync") })
+                }
+            }
         }
-        "summary" -> SummaryScreen("Progress Summary", projects.sortedBy { it.subBlock }, entries) {
-            detailCode = it; detailBack = "summary"; screen = "project"
+    ) { padding ->
+        Box(Modifier.padding(padding).fillMaxSize()) {
+            when (screen) {
+                "menu" -> DashboardScreen(b, projects, entries, loading, { go(it) })
+                "projects" -> ProjectsScreen(projects, entries, loading, listFilter, { go("project:$it") }, { screen = "register" })
+                "register" -> RegisterProjectScreen(b, everyProject.associateBy { it.drrCode }) { p ->
+                    saveThen { dao.saveProject(p) }
+                    screen = "menu"
+                }
+                "update" -> DailyUpdateScreen(projects) { u, p ->
+                    saveThen {
+                        if (p != null) StatusEngine.saveProjectKeepingStatus(dao, p)
+                        val latestBefore = dao.latestUpdateDate(u.drrCode)   // read BEFORE saving
+                        dao.saveUpdate(u)
+                        StatusEngine.applyAfterSave(dao, u, latestBefore)
+                    }
+                    screen = "menu"
+                }
+                "summary" -> SummaryScreen("Progress Summary", projects.sortedBy { it.subBlock }, entries) {
+                    detailCode = it; detailBack = "summary"; screen = "project"
+                }
+                "project" -> {
+                    val p = byCode[detailCode]
+                    if (p == null) screen = "menu"
+                    else ProjectDetailScreen(
+                        p, entries,
+                        onEdit = { u -> saveThen { dao.saveUpdate(u) } },   // editing a past day never changes the project status
+                        onMarkCompleted = { saveThen { StatusEngine.markCompleted(dao, p.drrCode) } },
+                        onReopen = { scope.launch { StatusEngine.reopen(dao, p.drrCode) } }
+                    )
+                }
+                "report" -> ReportScreen(b, entries)
+                "projectupdate" -> ProjectUpdateScreen(listOf(b), projects, entries)
+                "reminder" -> ReminderScreen()
+                "sync" -> SyncScreen(b, dao) { prefs.edit().remove("block").apply(); block = null; screen = "menu" }
+            }
         }
-        "project" -> {
-            val p = byCode[detailCode]
-            if (p == null) screen = "menu"
-            else ProjectDetailScreen(p, entries) { u -> scope.launch { dao.saveUpdate(u); syncAll(dao, b) } }
-        }
-        "report" -> ReportScreen(b, entries)
-        "projectupdate" -> ProjectUpdateScreen(listOf(b), projects, entries)
-        "sync" -> SyncScreen(b, dao) { prefs.edit().remove("block").apply(); block = null; screen = "menu" }
     }
 }
 
@@ -171,11 +272,12 @@ fun LoginScreen(dao: AppDao, onLogin: (String) -> Unit, onAdmin: () -> Unit) {
                     visualTransformation = PasswordVisualTransformation(),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
                     isError = wrong,
-                    supportingText = { if (wrong) Text("Wrong PIN") }
+                    supportingText = { if (wrong) Text(if (KoboConfig.ADMIN_PIN.isEmpty()) "Admin PIN is not set in this build" else "Wrong PIN") }
                 )
             },
             confirmButton = {
-                Button({ if (pin == KoboConfig.ADMIN_PIN) { askPin = false; onAdmin() } else wrong = true }) { Text("Login") }
+                // An empty configured PIN means "admin login off": it must never match an empty entry.
+                Button({ if (KoboConfig.ADMIN_PIN.isNotEmpty() && pin == KoboConfig.ADMIN_PIN) { askPin = false; onAdmin() } else wrong = true }) { Text("Login") }
             },
             dismissButton = { TextButton({ askPin = false }) { Text("Cancel") } }
         )
@@ -205,7 +307,7 @@ fun DailyUpdateScreen(projects: List<Project>, onSave: (DailyUpdate, Project?) -
     val selected = projects.firstOrNull { it.drrCode == selectedCode } ?: projects.first()
     var endText by remember(selected.drrCode, selected.endDate) { mutableStateOf(selected.endDate) }
     var projectMenu by remember { mutableStateOf(false) }
-    var date by remember { mutableStateOf(LocalDate.now()) }
+    var date by remember { mutableStateOf(AppTime.today()) }
     var progressText by remember { mutableStateOf("") }
     var skilledText by remember { mutableStateOf("") }
     var unskilledText by remember { mutableStateOf("") }
@@ -216,8 +318,8 @@ fun DailyUpdateScreen(projects: List<Project>, onSave: (DailyUpdate, Project?) -
     var showDatePicker by remember { mutableStateOf(false) }
     val dateFormat = remember { DateTimeFormatter.ofPattern("EEE, dd MMM yyyy", Locale.ENGLISH) }
     fun dateNote(d: LocalDate) = when (d) {
-        LocalDate.now() -> "Today"
-        LocalDate.now().minusDays(1) -> "Yesterday"
+        AppTime.today() -> "Today"
+        AppTime.today().minusDays(1) -> "Yesterday"
         else -> ""
     }
 
@@ -280,6 +382,13 @@ fun DailyUpdateScreen(projects: List<Project>, onSave: (DailyUpdate, Project?) -
                 }
             }
 
+            if (selected.projectStatus() == ProjectStatus.Completed) {
+                MessageBanner(
+                    BannerKind.Info,
+                    "This project is marked Completed. Saving an update keeps it Completed. Use Reopen in Project details if work resumes."
+                )
+            }
+
             // Date: tap to open the calendar
             Text("DATE", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
             Surface(
@@ -309,7 +418,7 @@ fun DailyUpdateScreen(projects: List<Project>, onSave: (DailyUpdate, Project?) -
                     selectableDates = object : SelectableDates {
                         // no future dates
                         override fun isSelectableDate(utcTimeMillis: Long) =
-                            !Instant.ofEpochMilli(utcTimeMillis).atZone(ZoneOffset.UTC).toLocalDate().isAfter(LocalDate.now())
+                            !Instant.ofEpochMilli(utcTimeMillis).atZone(ZoneOffset.UTC).toLocalDate().isAfter(AppTime.today())
                     }
                 )
                 DatePickerDialog(
@@ -475,7 +584,7 @@ private fun WorkforceInputCard(
 @Composable
 fun ReportScreen(block: String, entries: List<DailyEntry>) {
     val ctx = LocalContext.current
-    var date by remember { mutableStateOf(LocalDate.now().toString()) }
+    var date by remember { mutableStateOf(AppTime.today().toString()) }
     val d = runCatching { LocalDate.parse(date) }.getOrNull()
     val text = if (d != null) WhatsAppReport.blockReport(block, d, entries) else "Wrong date"
     Column(

@@ -103,6 +103,28 @@ interface AppDao {
 
     @Query("UPDATE daily_updates SET synced = 1 WHERE drrCode = :c AND date = :d")
     suspend fun markUpdateSynced(c: String, d: String)
+
+    // ---- Project status (added for status management + daily reminder; no schema change) ----
+    // Changes ONLY the status column. It deliberately leaves `synced` alone: status is a local-only
+    // field (Kobo has no status field for projects), so a status change must never re-send a project.
+    @Query("UPDATE projects SET status = :status WHERE drrCode = :code")
+    suspend fun setStatus(code: String, status: String)
+
+    @Query("SELECT * FROM projects")
+    suspend fun projectList(): List<Project>
+
+    @Query("SELECT * FROM projects WHERE block = :block")
+    suspend fun projectsOfBlock(block: String): List<Project>
+
+    // Updates saved for exactly one date (yyyy-MM-dd). Used with TODAY only, never with history.
+    @Query("SELECT * FROM daily_updates WHERE date = :date")
+    suspend fun updatesOn(date: String): List<DailyUpdate>
+
+    @Query("SELECT * FROM daily_updates WHERE drrCode = :code ORDER BY date DESC LIMIT 1")
+    suspend fun latestUpdate(code: String): DailyUpdate?
+
+    @Query("SELECT MAX(date) FROM daily_updates WHERE drrCode = :code")
+    suspend fun latestUpdateDate(code: String): String?
 }
 
 suspend fun AppDao.markAllUnsynced() { markAllProjectsUnsynced(); markAllUpdatesUnsynced() }

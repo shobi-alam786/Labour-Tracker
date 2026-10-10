@@ -21,8 +21,11 @@ import java.time.LocalDate
 // Admin: sees every block. Data comes from Kobo ("Download all blocks").
 @Composable
 fun AdminApp(dao: AppDao, onLogout: () -> Unit) {
-    val projects by dao.allProjects().collectAsState(emptyList())
+    val storedProjects by dao.allProjects().collectAsState(emptyList())
     val updates by dao.allUpdates().collectAsState(emptyList())
+    // Admin only downloads data (status is local to each TM phone), so the status shown here is derived
+    // from the newest update: Completed if it was saved through the completion step, otherwise Ongoing.
+    val projects = remember(storedProjects, updates) { StatusRules.derivedForAdmin(storedProjects, updates) }
     val byCode = remember(projects) { projects.associateBy { it.drrCode } }
     val entries = remember(projects, updates) {
         updates.mapNotNull { u -> byCode[u.drrCode]?.let { u.toEntry(it) } }
@@ -71,7 +74,7 @@ private fun AdminHome(
     val scope = rememberCoroutineScope()
     var msg by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
-    val today = LocalDate.now()
+    val today = AppTime.today()
     val todayT = Summary.total(entries.filter { it.date == today })
     val allT = Summary.total(entries)
     val w = listOf(1f, 1.3f, 1.2f, 1.5f, 1.1f)
@@ -127,7 +130,7 @@ private fun AdminHome(
 @Composable
 private fun AdminReportScreen(entries: List<DailyEntry>) {
     val ctx = LocalContext.current
-    var date by remember { mutableStateOf(LocalDate.now().toString()) }
+    var date by remember { mutableStateOf(AppTime.today().toString()) }
     val d = runCatching { LocalDate.parse(date) }.getOrNull()
     val text = if (d != null) WhatsAppReport.allBlocksReport(d, entries) else "Wrong date"
     Column(

@@ -8,24 +8,32 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
 import java.util.UUID
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.Alignment
 import org.json.JSONObject
 
-// EDIT THESE LINES for your Kobo account and forms
+// Kobo settings.
+// The API token and the admin PIN are NOT stored in the source code any more. They are injected at build
+// time from local.properties (or environment variables) - see README.md - and end up in BuildConfig.
 object KoboConfig {
     const val SERVER = "https://kc.kobotoolbox.org"
-    const val TOKEN = "df36f81bf71b0039ef6a8f3a248bca94322567b6"
+    val TOKEN: String get() = BuildConfig.KOBO_TOKEN
     // ONE combined form (projects + daily updates). Paste its UID from the Kobo project URL.
     const val FORM_UID = "a6NyLaFx7XLYypjjW7JXyN"
     const val KF_SERVER = "https://kf.kobotoolbox.org"
-    // Admin login PIN. CHANGE THIS before you build the release APK.
-    const val ADMIN_PIN = "7391"
+    // Admin login PIN (from local.properties). Empty = admin login is switched off in this build.
+    val ADMIN_PIN: String get() = BuildConfig.ADMIN_PIN
+    val configured: Boolean get() = TOKEN.isNotBlank()
+    const val MISSING_TOKEN = "Kobo token is not set in this build. Add KOBO_TOKEN to local.properties and rebuild (see README)."
 }
 
 private fun esc(s: String) = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
@@ -36,6 +44,7 @@ private fun xml(formId: String, f: Map<String, String>): String {
 }
 
 private fun post(xml: String): Boolean {
+    if (!KoboConfig.configured) throw IllegalStateException(KoboConfig.MISSING_TOKEN)
     val boundary = "----kobo" + System.currentTimeMillis()
     val c = URL("${KoboConfig.SERVER}/submission").openConnection() as HttpURLConnection
     c.requestMethod = "POST"
@@ -58,7 +67,10 @@ private fun post(xml: String): Boolean {
     return true
 }
 
-suspend fun syncAll(dao: AppDao, block: String): String = withContext(Dispatchers.IO) {
+// Only one send at a time: two overlapping syncs could post the same unsent record twice.
+private val syncMutex = Mutex()
+
+suspend fun syncAll(dao: AppDao, block: String): String = withContext(Dispatchers.IO) { syncMutex.withLock {
     var ok = 0
     var fail = 0
     var firstError = ""
@@ -94,57 +106,112 @@ suspend fun syncAll(dao: AppDao, block: String): String = withContext(Dispatcher
         }
     }
     "Sent: $ok   Failed: $fail" + if (firstError.isNotEmpty()) "\nFirst error: $firstError" else ""
+} }
+
+// Short text for the snackbar after a save. `result` is the text returned by syncAll.
+fun friendlySyncMessage(result: String): String = when {
+    result.contains("No internet", ignoreCase = true) -> "Saved on this phone. It will be sent when internet is available."
+    Regex("Failed: [1-9]").containsMatchIn(result) -> "Saved on this phone. Some items were not sent - see Kobo sync."
+    result.contains("Sent: 0") -> "Saved."
+    else -> "Saved and sent to Kobo."
 }
+
+private fun syncFailed(msg: String): Boolean =
+    msg.contains("No internet", ignoreCase = true) || msg.contains("error", ignoreCase = true) ||
+        Regex("Failed: [1-9]").containsMatchIn(msg)
 
 @Composable
 fun SyncScreen(block: String, dao: AppDao, onLogout: () -> Unit) {
     val scope = rememberCoroutineScope()
     var msg by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
+    var confirmResend by remember { mutableStateOf(false) }
     val pendingP by dao.pendingProjects().collectAsState(0)
     val pendingU by dao.pendingUpdates().collectAsState(0)
+    val pending = pendingP + pendingU
     Column(
-        Modifier.padding(16.dp).verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        Text("Sync with Kobo", style = MaterialTheme.typography.titleLarge)
-        Text(
-            if (pendingP + pendingU == 0) "Everything on this phone is sent to Kobo."
-            else "Not sent yet: $pendingP projects, $pendingU daily updates",
-            fontWeight = FontWeight.Bold,
-            color = if (pendingP + pendingU == 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+        Column {
+            Text("Kobo sync", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+            Text(
+                "Records are always saved on this phone first. Send them when you have internet.",
+                style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        if (!KoboConfig.configured) MessageBanner(BannerKind.Error, KoboConfig.MISSING_TOKEN)
+        if (pending == 0) MessageBanner(BannerKind.Success, "Everything on this phone is sent to Kobo.")
+        else MessageBanner(BannerKind.Info, "Not sent yet: $pendingP projects, $pendingU daily updates")
+
+        if (busy) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 3.dp)
+                Text("Working...", style = MaterialTheme.typography.bodyMedium)
+            }
+        } else if (msg.isNotEmpty()) {
+            MessageBanner(if (syncFailed(msg)) BannerKind.Error else BannerKind.Success, msg)
+        }
+
+        AppCard(Modifier.fillMaxWidth()) {
+            Text("Send", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+            Text("Sends your new projects and daily updates to Kobo.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(10.dp))
+            Button(
+                onClick = { busy = true; scope.launch { msg = syncAll(dao, block); busy = false } },
+                enabled = !busy, modifier = Modifier.fillMaxWidth().height(52.dp), shape = RoundedCornerShape(16.dp)
+            ) { Text(if (busy) "Working..." else "Send now") }
+        }
+
+        AppCard(Modifier.fillMaxWidth()) {
+            Text("Restore", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+            Text(
+                "Lost or changed your phone? Restore all your projects and daily updates from Kobo. Data not yet sent from this phone is never overwritten.",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.height(10.dp))
+            OutlinedButton(
+                onClick = { busy = true; scope.launch { msg = pullData(dao, block); busy = false } },
+                enabled = !busy, modifier = Modifier.fillMaxWidth().height(52.dp), shape = RoundedCornerShape(16.dp)
+            ) { Text(if (busy) "Working..." else "Restore my Block $block data") }
+        }
+
+        AppCard(Modifier.fillMaxWidth()) {
+            Text("Re-send everything", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+            Text(
+                "Only needed once after changing to a new combined Kobo form. Records already in Kobo are sent again, so use it only when you must.",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.height(10.dp))
+            OutlinedButton(
+                onClick = { confirmResend = true },
+                enabled = !busy, modifier = Modifier.fillMaxWidth().height(52.dp), shape = RoundedCornerShape(16.dp)
+            ) { Text("Re-send all my data") }
+        }
+
+        OutlinedButton(onClick = onLogout, modifier = Modifier.fillMaxWidth().height(52.dp), shape = RoundedCornerShape(16.dp)) { Text("Log out") }
+        Text("Data on this phone stays. Log in again with your email and password.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+
+    if (confirmResend) {
+        AlertDialog(
+            onDismissRequest = { confirmResend = false },
+            title = { Text("Re-send all data?", fontWeight = FontWeight.Bold) },
+            text = { Text("Every project and daily update on this phone will be sent to Kobo again. Records already in Kobo will appear twice there. Continue only if you changed the Kobo form.") },
+            confirmButton = {
+                Button({
+                    confirmResend = false
+                    busy = true
+                    scope.launch { dao.markAllUnsynced(); msg = syncAll(dao, block); busy = false }
+                }) { Text("Re-send") }
+            },
+            dismissButton = { TextButton({ confirmResend = false }) { Text("Cancel") } }
         )
-        Button(
-            onClick = { busy = true; scope.launch { msg = syncAll(dao, block); busy = false } },
-            enabled = !busy, modifier = Modifier.fillMaxWidth()
-        ) { Text(if (busy) "Working..." else "Send now") }
-        Text("Sends your new projects and daily updates to Kobo.", style = MaterialTheme.typography.bodySmall)
-        HorizontalDivider()
-        OutlinedButton(
-            onClick = { busy = true; scope.launch { msg = pullData(dao, block); busy = false } },
-            enabled = !busy, modifier = Modifier.fillMaxWidth()
-        ) { Text(if (busy) "Working..." else "Restore my Block $block data") }
-        Text(
-            "Lost or changed your phone? Pick your block, then restore all your projects and daily updates from Kobo. Data not yet sent from this phone is never overwritten.",
-            style = MaterialTheme.typography.bodySmall
-        )
-        HorizontalDivider()
-        OutlinedButton(
-            onClick = { busy = true; scope.launch { dao.markAllUnsynced(); msg = syncAll(dao, block); busy = false } },
-            enabled = !busy, modifier = Modifier.fillMaxWidth()
-        ) { Text(if (busy) "Working..." else "Re-send all my data") }
-        Text(
-            "Use once after changing to the new combined Kobo form, so old data also goes to the new form.",
-            style = MaterialTheme.typography.bodySmall
-        )
-        Text(msg)
-        HorizontalDivider()
-        OutlinedButton(onClick = onLogout, modifier = Modifier.fillMaxWidth()) { Text("Log out") }
-        Text("Data on this phone stays. Log in again with your email and password.", style = MaterialTheme.typography.bodySmall)
     }
 }
 
 private fun get(url: String): String {
+    if (!KoboConfig.configured) throw IllegalStateException(KoboConfig.MISSING_TOKEN)
     val c = URL(url).openConnection() as HttpURLConnection
     c.setRequestProperty("Authorization", "Token ${KoboConfig.TOKEN}")
     c.connectTimeout = 15000
@@ -225,6 +292,7 @@ suspend fun pullData(dao: AppDao, block: String?): String = withContext(Dispatch
     try {
         val all = fetchAll()
         val codes = HashSet<String>()
+        val restoredNew = ArrayList<String>()
         for (o in all.filter { it.optString("record_type") == "project" }) {
             val code = o.optString("drr_code")
             val blk = o.optString("block")
@@ -234,7 +302,8 @@ suspend fun pullData(dao: AppDao, block: String?): String = withContext(Dispatch
             if (local != null && !local.synced) { kept++; continue }
             dao.saveProject(Project(code, o.optString("activity"), blk, o.optString("sub_block"),
                 o.optString("start_date"), o.optString("end_date"),
-                status = local?.status ?: "Ongoing", progress = local?.progress ?: 0, synced = true))
+                status = local?.status ?: ProjectStatus.Pending.label, progress = local?.progress ?: 0, synced = true))
+            if (local == null) restoredNew.add(code)
             np++
         }
         for (o in all.filter { it.optString("record_type") == "update" }) {
@@ -250,6 +319,9 @@ suspend fun pullData(dao: AppDao, block: String?): String = withContext(Dispatch
                 o.optString("unskilled").toIntOrNull() ?: 0, synced = true))
             nu++
         }
+        // Status is local-only. A project that is new on this phone gets Completed if its newest update was a
+        // completion step, otherwise Ongoing / Pending depending on today's update. Existing local status is kept.
+        for (code in restoredNew) dao.setStatus(code, StatusEngine.statusForRestored(dao, code).label)
         if (block == null) {   // Admin also gets the block accounts
             val local = dao.accountList().associateBy { it.block }
             for (a in fetchAccounts()) {
