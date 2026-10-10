@@ -26,6 +26,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Refresh
@@ -151,7 +152,7 @@ fun App() {
 
     BackHandler(enabled = screen != "menu") { screen = if (screen == "project") detailBack else "menu" }
 
-    val tabs = listOf("menu", "projects", "update", "sync")
+    val tabs = listOf("menu", "register", "projects", "update", "sync")
     Scaffold(
         snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
@@ -171,6 +172,8 @@ fun App() {
                 NavigationBar {
                     NavigationBarItem(selected = screen == "menu", onClick = { screen = "menu" },
                         icon = { Icon(Icons.Filled.Home, null) }, label = { Text("Home") })
+                    NavigationBarItem(selected = screen == "register", onClick = { screen = "register" },
+                        icon = { Icon(Icons.Filled.Add, null) }, label = { Text("Register") })
                     NavigationBarItem(selected = screen == "projects", onClick = { go("projects") },
                         icon = { Icon(Icons.AutoMirrored.Filled.List, null) }, label = { Text("Projects") })
                     NavigationBarItem(selected = screen == "update", onClick = { screen = "update" },
@@ -312,13 +315,11 @@ fun DailyUpdateScreen(projects: List<Project>, onSave: (DailyUpdate, Project?) -
 
     var selectedCode by remember { mutableStateOf(projects.first().drrCode) }
     val selected = projects.firstOrNull { it.drrCode == selectedCode } ?: projects.first()
-    var endText by remember(selected.drrCode, selected.endDate) { mutableStateOf(selected.endDate) }
     var projectMenu by remember { mutableStateOf(false) }
     var date by remember { mutableStateOf(AppTime.today()) }
     var progressText by remember { mutableStateOf("") }
     var skilledText by remember { mutableStateOf("") }
     var unskilledText by remember { mutableStateOf("") }
-    var completed by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf("") }
     val scroll = rememberScrollState()
     val numberKeyboard = KeyboardOptions(keyboardType = KeyboardType.Number)
@@ -474,17 +475,6 @@ fun DailyUpdateScreen(projects: List<Project>, onSave: (DailyUpdate, Project?) -
                 }
             }
 
-            // Project end date
-            OutlinedTextField(
-                value = endText,
-                onValueChange = { endText = it.trim().take(10); error = "" },
-                label = { Text("Project end date (yyyy-MM-dd)") },
-                supportingText = { Text("Optional. Empty + project completed = today's update date.") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-                leadingIcon = { Text("⚑", color = MaterialTheme.colorScheme.primary) }
-            )
-
             // Workforce cards
             Text("TODAY'S WORKFORCE", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -497,21 +487,6 @@ fun DailyUpdateScreen(projects: List<Project>, onSave: (DailyUpdate, Project?) -
                     Text("TOTAL WORKFORCE", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimaryContainer)
                     Spacer(Modifier.weight(1f))
                     Text(total.toString(), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                }
-            }
-
-            // Completion status
-            Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceContainerLow, tonalElevation = 1.dp) {
-                Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Surface(shape = RoundedCornerShape(12.dp), color = if (completed) MaterialTheme.colorScheme.tertiaryContainer else MaterialTheme.colorScheme.surfaceVariant) {
-                        Text(if (completed) "✓" else "○", Modifier.padding(11.dp), fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                    }
-                    Spacer(Modifier.width(12.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(if (completed) "Project completed" else "Project ongoing", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-                        Text(if (completed) "Mark this update as completed" else "Keep this project open for the next update", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    Switch(checked = completed, onCheckedChange = { completed = it })
                 }
             }
 
@@ -530,22 +505,8 @@ fun DailyUpdateScreen(projects: List<Project>, onSave: (DailyUpdate, Project?) -
                         p == null || p !in 0..100 -> error = "Enter progress from 0 to 100."
                         s == null || s < 0 -> error = "Enter a valid skilled worker count."
                         u == null || u < 0 -> error = "Enter a valid unskilled worker count."
-                        else -> {
-                            val endRaw = endText.trim()
-                            val endParsed = if (endRaw.isEmpty()) null else runCatching { LocalDate.parse(endRaw) }.getOrNull()
-                            val startParsed = runCatching { LocalDate.parse(selected.startDate) }.getOrNull()
-                            val isDone = completed || p >= 100
-                            when {
-                                endRaw.isNotEmpty() && endParsed == null -> error = "End date must look like 2026-12-31."
-                                endParsed != null && startParsed != null && endParsed.isBefore(startParsed) ->
-                                    error = "End date cannot be before the start date."
-                                else -> {
-                                    val finalEnd = if (endRaw.isEmpty() && isDone) date.toString() else endRaw
-                                    val changed = if (finalEnd != selected.endDate) selected.copy(endDate = finalEnd, synced = false) else null
-                                    onSave(DailyUpdate(selected.drrCode, date.toString(), if (isDone) "Completed" else "Ongoing", p, s, u), changed)
-                                }
-                            }
-                        }
+                        // Completion is done with "Mark project as completed" in Project details (it also sets the end date).
+                        else -> onSave(DailyUpdate(selected.drrCode, date.toString(), "Ongoing", p, s, u), null)
                     }
                 },
                 modifier = Modifier.fillMaxWidth().height(56.dp),

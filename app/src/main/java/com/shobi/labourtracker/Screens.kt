@@ -133,6 +133,21 @@ fun DashboardScreen(
             StatusCard(ProjectStatus.Completed, completed, Modifier.weight(1f)) { go("projects:Completed") }
         }
 
+        // Quick actions (Register is in the bottom bar next to Home)
+        SectionTitle("Quick actions")
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+            ActionCard(Icons.Filled.Edit, "Daily update", "Record today", { go("update") }, Modifier.weight(1f))
+            ActionCard(Icons.AutoMirrored.Filled.List, "Summary", "View progress", { go("summary") }, Modifier.weight(1f))
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+            ActionCard(Icons.Filled.Refresh, "Kobo sync", "Send / restore", { go("sync") }, Modifier.weight(1f))
+            ActionCard(Icons.Filled.Email, "Project update", "Daily message", { go("projectupdate") }, Modifier.weight(1f))
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+            ActionCard(Icons.AutoMirrored.Filled.List, "WhatsApp report", "Block totals", { go("report") }, Modifier.weight(1f))
+            Spacer(Modifier.weight(1f))
+        }
+
         // Reminder
         AppCard(Modifier.fillMaxWidth(), onClick = { go("reminder") }) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -185,21 +200,6 @@ fun DashboardScreen(
             OutlinedButton(onClick = { go("projects") }, modifier = Modifier.fillMaxWidth().height(48.dp), shape = RoundedCornerShape(14.dp)) {
                 Text("View all ${projects.size} projects")
             }
-        }
-
-        // Quick actions
-        SectionTitle("Quick actions")
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
-            ActionCard(Icons.Filled.Edit, "Daily update", "Record today", { go("update") }, Modifier.weight(1f))
-            ActionCard(Icons.Filled.Add, "Register", "New project", { go("register") }, Modifier.weight(1f))
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
-            ActionCard(Icons.AutoMirrored.Filled.List, "Summary", "View progress", { go("summary") }, Modifier.weight(1f))
-            ActionCard(Icons.Filled.Refresh, "Kobo sync", "Send / restore", { go("sync") }, Modifier.weight(1f))
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
-            ActionCard(Icons.Filled.Email, "Project update", "Daily message", { go("projectupdate") }, Modifier.weight(1f))
-            ActionCard(Icons.AutoMirrored.Filled.List, "WhatsApp report", "Block totals", { go("report") }, Modifier.weight(1f))
         }
 
         Spacer(Modifier.height(8.dp))
