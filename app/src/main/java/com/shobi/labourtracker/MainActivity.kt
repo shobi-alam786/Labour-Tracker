@@ -208,7 +208,7 @@ fun App() {
                     saveThen { dao.saveProject(p) }
                     screen = "menu"
                 }
-                "update" -> DailyUpdateScreen(projects) { u, p ->
+                "update" -> DailyUpdateScreen(projects, entries.filter { it.date == AppTime.today() }.map { it.drrCode }.toSet()) { u, p ->
                     saveThen {
                         if (p != null) StatusEngine.saveProjectKeepingStatus(dao, p)
                         val latestBefore = dao.latestUpdateDate(u.drrCode)   // read BEFORE saving
@@ -311,7 +311,7 @@ fun LoginScreen(dao: AppDao, onLogin: (String) -> Unit, onAdmin: () -> Unit) {
 }
 
 @Composable
-fun DailyUpdateScreen(projects: List<Project>, onSave: (DailyUpdate, Project?) -> Unit) {
+fun DailyUpdateScreen(projects: List<Project>, updatedToday: Set<String>, onSave: (DailyUpdate, Project?) -> Unit) {
     if (projects.isEmpty()) {
         Column(
             Modifier.fillMaxSize().padding(24.dp),
@@ -329,8 +329,9 @@ fun DailyUpdateScreen(projects: List<Project>, onSave: (DailyUpdate, Project?) -
         return
     }
 
-    var selectedCode by remember { mutableStateOf(projects.first().drrCode) }
-    val selected = projects.firstOrNull { it.drrCode == selectedCode } ?: projects.first()
+    // No project is pre-selected: the person must choose one first.
+    var selectedCode by remember { mutableStateOf<String?>(null) }
+    val selected: Project? = projects.firstOrNull { it.drrCode == selectedCode }
     var projectMenu by remember { mutableStateOf(false) }
     var date by remember { mutableStateOf(AppTime.today()) }
     var progressText by remember { mutableStateOf("") }
@@ -368,44 +369,69 @@ fun DailyUpdateScreen(projects: List<Project>, onSave: (DailyUpdate, Project?) -
             Modifier.fillMaxSize().verticalScroll(scroll).padding(horizontal = 18.dp, vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            // Project selector
+            // Project selector. Green = today's update is done, red = still missing, grey = completed.
             Text("PROJECT", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+            fun tone(p: Project): Pair<Color, Color> = when {
+                p.projectStatus() == ProjectStatus.Completed -> Color(0xFFE3E7EC) to Color(0xFF4A5560)
+                p.drrCode in updatedToday -> Color(0xFFD9F2E1) to Color(0xFF14663A)
+                else -> Color(0xFFFFDAD6) to Color(0xFF9A1B12)
+            }
+            fun toneLabel(p: Project): String = when {
+                p.projectStatus() == ProjectStatus.Completed -> "Completed"
+                p.drrCode in updatedToday -> "Updated today"
+                else -> "Not updated today"
+            }
+            val selTone = if (selected != null) tone(selected) else Color(0xFFFFDAD6) to Color(0xFF9A1B12)
             Box {
                 Surface(
                     onClick = { projectMenu = true },
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(20.dp),
-                    color = MaterialTheme.colorScheme.surfaceContainerLow,
-                    tonalElevation = 1.dp
+                    color = selTone.first,
+                    border = androidx.compose.foundation.BorderStroke(2.dp, selTone.second)
                 ) {
                     Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Surface(shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.primaryContainer) {
-                            Text("▦", Modifier.padding(horizontal = 13.dp, vertical = 10.dp), fontSize = 20.sp, color = MaterialTheme.colorScheme.primary)
-                        }
+                        Box(Modifier.size(14.dp).background(selTone.second, androidx.compose.foundation.shape.CircleShape))
                         Spacer(Modifier.width(12.dp))
                         Column(Modifier.weight(1f)) {
-                            Text(selected.subBlock.ifBlank { "Sub-block" }, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                            Text(selected.activity, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text("DRR ${selected.drrCode}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                            if (selected == null) {
+                                Text("Select a project", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = selTone.second)
+                                Text("Required before you can record an update", style = MaterialTheme.typography.bodySmall, color = selTone.second)
+                            } else {
+                                Text(selected.subBlock.ifBlank { "Sub-block" }, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = selTone.second)
+                                Text(selected.activity, style = MaterialTheme.typography.bodySmall, color = selTone.second, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text("DRR ${selected.drrCode} - ${toneLabel(selected)}", style = MaterialTheme.typography.labelSmall, color = selTone.second)
+                            }
                         }
-                        Text("⌄", fontSize = 24.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("⌄", fontSize = 24.sp, color = selTone.second)
                     }
                 }
                 DropdownMenu(expanded = projectMenu, onDismissRequest = { projectMenu = false }) {
                     projects.forEach { p ->
+                        val t = tone(p)
                         DropdownMenuItem(
+                            modifier = Modifier.background(t.first),
                             text = {
-                                Column {
-                                    Text("${p.subBlock} • ${p.activity}", fontWeight = FontWeight.SemiBold)
-                                    Text("DRR ${p.drrCode}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Box(Modifier.size(12.dp).background(t.second, androidx.compose.foundation.shape.CircleShape))
+                                    Spacer(Modifier.width(10.dp))
+                                    Column {
+                                        Text("${p.subBlock} • ${p.activity}", fontWeight = FontWeight.SemiBold, color = t.second)
+                                        Text("DRR ${p.drrCode} - ${toneLabel(p)}", style = MaterialTheme.typography.labelSmall, color = t.second)
+                                    }
                                 }
                             },
-                            onClick = { selectedCode = p.drrCode; projectMenu = false }
+                            onClick = { selectedCode = p.drrCode; projectMenu = false; error = "" }
                         )
                     }
                 }
             }
 
+            if (selected == null) {
+                MessageBanner(BannerKind.Error, "Select a project first. In the list, green = update done today, red = update still missing.")
+            }
+
+            if (selected != null) {
             if (selected.projectStatus() == ProjectStatus.Completed) {
                 MessageBanner(
                     BannerKind.Info,
@@ -537,6 +563,7 @@ fun DailyUpdateScreen(projects: List<Project>, onSave: (DailyUpdate, Project?) -
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Spacer(Modifier.height(8.dp))
+            }
         }
     }
 }
