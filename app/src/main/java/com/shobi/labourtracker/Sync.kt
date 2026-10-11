@@ -28,9 +28,16 @@ object KoboConfig {
     private const val DEFAULT_KF = "https://kf.kobotoolbox.org"
 
     private var prefs: android.content.SharedPreferences? = null
+    private var idPrefs: android.content.SharedPreferences? = null
     fun init(ctx: android.content.Context) {
         prefs = ctx.applicationContext.getSharedPreferences("kobo_config", android.content.Context.MODE_PRIVATE)
+        idPrefs = ctx.applicationContext.getSharedPreferences("kobo_instance_ids", android.content.Context.MODE_PRIVATE)
     }
+
+    // The Kobo instance id of the last submission sent for a record. Sending the record again with this id as
+    // <deprecatedID> makes Kobo EDIT that submission instead of storing a second copy.
+    fun lastInstanceId(key: String): String? = idPrefs?.getString(key, null)
+    fun rememberInstanceId(key: String, id: String) { idPrefs?.edit()?.putString(key, id)?.apply() }
     private fun stored(k: String): String = prefs?.getString(k, null)?.trim().orEmpty()
 
     val KF_SERVER: String get() = stored("kf_server").ifEmpty { DEFAULT_KF }.trimEnd('/')
@@ -103,12 +110,20 @@ suspend fun testKoboConnection(kf: String, uid: String, token: String): Pair<Boo
 
 private fun esc(s: String) = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
-private fun xml(formId: String, f: Map<String, String>): String {
+private class Outgoing(val xml: String, val key: String, val instanceId: String)
+
+// `key` identifies the record (form + its natural key). If it was sent before, the new submission carries
+// <deprecatedID> = the previous instance id, so Kobo replaces the old submission (an edit, not a duplicate).
+private fun xml(formId: String, key: String, f: Map<String, String>): Outgoing {
     val body = f.entries.joinToString("") { "<${it.key}>${esc(it.value)}</${it.key}>" }
-    return "<$formId id=\"$formId\">$body<meta><instanceID>uuid:${UUID.randomUUID()}</instanceID></meta></$formId>"
+    val newId = "uuid:${UUID.randomUUID()}"
+    val old = KoboConfig.lastInstanceId(key)
+    val deprecated = if (old != null) "<deprecatedID>$old</deprecatedID>" else ""
+    return Outgoing("<$formId id=\"$formId\">$body<meta><instanceID>$newId</instanceID>$deprecated</meta></$formId>", key, newId)
 }
 
-private fun post(xml: String): Boolean {
+private fun post(out: Outgoing): Boolean {
+    val xml = out.xml
     if (!KoboConfig.configured) throw IllegalStateException(KoboConfig.MISSING_TOKEN)
     val boundary = "----kobo" + System.currentTimeMillis()
     val c = URL("${KoboConfig.SERVER}/submission").openConnection() as HttpURLConnection
@@ -129,6 +144,7 @@ private fun post(xml: String): Boolean {
         ?.bufferedReader()?.use { it.readText() }?.take(200) ?: ""
     c.disconnect()
     if (code != 201 && code != 202) throw Exception("HTTP $code $body")
+    KoboConfig.rememberInstanceId(out.key, out.instanceId)
     return true
 }
 
@@ -143,7 +159,7 @@ suspend fun syncAll(dao: AppDao, block: String): String = withContext(Dispatcher
     for (p in dao.unsyncedProjects()) {
         if (offline) break
         try {
-            post(xml(KoboConfig.PROJECT_UID, linkedMapOf(
+            post(xml(KoboConfig.PROJECT_UID, "p:${KoboConfig.PROJECT_UID}:${p.drrCode}", linkedMapOf(
                 "drr_code" to p.drrCode, "block" to p.block, "activity" to p.activity,
                 "sub_block" to p.subBlock, "start_date" to p.startDate, "end_date" to p.endDate)))
             dao.markProjectSynced(p.drrCode); ok++
@@ -159,7 +175,7 @@ suspend fun syncAll(dao: AppDao, block: String): String = withContext(Dispatcher
             // Every daily update also carries the project details, so the Daily Updates table in Kobo
             // can be read on its own (activity, sub-block, start / end date next to the labour numbers).
             val proj = dao.getProject(u.drrCode)
-            post(xml(KoboConfig.UPDATE_UID, linkedMapOf(
+            post(xml(KoboConfig.UPDATE_UID, "u:${KoboConfig.UPDATE_UID}:${u.drrCode}:${u.date}", linkedMapOf(
                 "drr_code" to u.drrCode, "block" to (proj?.block ?: block),
                 "activity" to (proj?.activity ?: ""), "sub_block" to (proj?.subBlock ?: ""),
                 "start_date" to (proj?.startDate ?: ""), "end_date" to (proj?.endDate ?: ""),
@@ -250,7 +266,7 @@ fun SyncScreen(block: String, dao: AppDao, onLogout: () -> Unit, onSetup: (() ->
         AppCard(Modifier.fillMaxWidth()) {
             Text("Re-send everything", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
             Text(
-                "Normally not needed: changing the form UIDs in Kobo setup already does this. Records already in Kobo are sent again, so use it only when you must.",
+                "Normally not needed: changing the form UIDs in Kobo setup already does this. Records already sent are updated in Kobo, not duplicated.",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Spacer(Modifier.height(10.dp))
@@ -268,7 +284,7 @@ fun SyncScreen(block: String, dao: AppDao, onLogout: () -> Unit, onSetup: (() ->
         AlertDialog(
             onDismissRequest = { confirmResend = false },
             title = { Text("Re-send all data?", fontWeight = FontWeight.Bold) },
-            text = { Text("Every project and daily update on this phone will be sent to Kobo again. Records already in Kobo will appear twice there. Continue only if you must.") },
+            text = { Text("Every project and daily update on this phone will be sent to Kobo again. Records already sent by this version are updated in place, not duplicated.") },
             confirmButton = {
                 Button({
                     confirmResend = false
@@ -322,7 +338,7 @@ suspend fun sendAccounts(dao: AppDao): String = withContext(Dispatchers.IO) {
     var err = ""
     for (a in dao.unsyncedAccounts()) {
         try {
-            post(xml(KoboConfig.ACCOUNT_UID, linkedMapOf(
+            post(xml(KoboConfig.ACCOUNT_UID, "a:${KoboConfig.ACCOUNT_UID}:${a.block}", linkedMapOf(
                 "block" to a.block, "email" to a.email, "password" to a.password)))
             dao.markAccountSynced(a.block); ok++
         } catch (e: Exception) {
