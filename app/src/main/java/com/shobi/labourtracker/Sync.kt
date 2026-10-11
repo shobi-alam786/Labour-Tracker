@@ -26,8 +26,6 @@ import org.json.JSONObject
 // Build-time values from local.properties (BuildConfig) are only a fallback.
 object KoboConfig {
     private const val DEFAULT_KF = "https://kf.kobotoolbox.org"
-    // ONE combined form (projects + daily updates). Used until another UID is saved in Setup.
-    const val DEFAULT_FORM_UID = "a6NyLaFx7XLYypjjW7JXyN"
 
     private var prefs: android.content.SharedPreferences? = null
     fun init(ctx: android.content.Context) {
@@ -38,20 +36,45 @@ object KoboConfig {
     val KF_SERVER: String get() = stored("kf_server").ifEmpty { DEFAULT_KF }.trimEnd('/')
     // Submissions go to the "kc." host that belongs to the same server.
     val SERVER: String get() = KF_SERVER.replace("//kf.", "//kc.")
-    val FORM_UID: String get() = stored("form_uid").ifEmpty { DEFAULT_FORM_UID }
+
+    // Three separate Kobo forms (asset UIDs from the Kobo project URLs)
+    // Form UIDs are identifiers, not secrets, so they are built in as defaults (can still be changed in Kobo setup).
+    private const val DEFAULT_PROJECT_UID = "aHmuYpVMBT3kBeTCkgodk4"   // Register Project
+    private const val DEFAULT_UPDATE_UID = "a6NyLaFx7XLYypjjW7JXyN"    // Daily Updates (also carries the project details)
+    private const val DEFAULT_ACCOUNT_UID = "avG2ib884Dha9rCTtqcihF"   // Account Access
+    val PROJECT_UID: String get() = stored("project_uid").ifEmpty { DEFAULT_PROJECT_UID }
+    val UPDATE_UID: String get() = stored("update_uid").ifEmpty { DEFAULT_UPDATE_UID }
+    val ACCOUNT_UID: String get() = stored("account_uid").ifEmpty { DEFAULT_ACCOUNT_UID }
+
+    // One time after upgrading from the single combined form: everything on the phone is sent once to the three new forms.
+    fun consumeFormsMigration(): Boolean {
+        val sp = prefs ?: return false
+        if (sp.getBoolean("forms_split_v2", false)) return false
+        sp.edit().putBoolean("forms_split_v2", true).apply()
+        return true
+    }
+
     val TOKEN: String get() = stored("token").ifEmpty { BuildConfig.KOBO_TOKEN }
     // Empty = admin login is switched off.
     val ADMIN_PIN: String get() = stored("admin_pin").ifEmpty { BuildConfig.ADMIN_PIN }
-    val configured: Boolean get() = TOKEN.isNotBlank()
-    const val MISSING_TOKEN = "Kobo is not set up on this phone yet. Open Kobo setup and enter the server, form UID and API token."
+    val configured: Boolean
+        get() = TOKEN.isNotBlank() && PROJECT_UID.isNotBlank() && UPDATE_UID.isNotBlank() && ACCOUNT_UID.isNotBlank()
+    const val MISSING_TOKEN = "Kobo is not set up on this phone yet. Open Kobo setup and enter the server, the three form UIDs and the API token."
 
-    fun save(kfServer: String, formUid: String, token: String, adminPin: String) {
+    // Returns true when a form UID changed: the caller then marks local data as "not sent yet",
+    // so it is sent once to the new (empty) forms.
+    fun save(kfServer: String, projectUid: String, updateUid: String, accountUid: String, token: String, adminPin: String): Boolean {
+        val changed = projectUid.trim() != stored("project_uid") || updateUid.trim() != stored("update_uid") ||
+            accountUid.trim() != stored("account_uid")
         prefs?.edit()
             ?.putString("kf_server", kfServer.trim())
-            ?.putString("form_uid", formUid.trim())
+            ?.putString("project_uid", projectUid.trim())
+            ?.putString("update_uid", updateUid.trim())
+            ?.putString("account_uid", accountUid.trim())
             ?.putString("token", token.trim())
             ?.putString("admin_pin", adminPin.trim())
             ?.apply()
+        return changed
     }
     fun clear() { prefs?.edit()?.clear()?.apply() }
 }
@@ -120,9 +143,8 @@ suspend fun syncAll(dao: AppDao, block: String): String = withContext(Dispatcher
     for (p in dao.unsyncedProjects()) {
         if (offline) break
         try {
-            post(xml(KoboConfig.FORM_UID, linkedMapOf(
-                "record_type" to "project",
-                "drr_code" to p.drrCode, "activity" to p.activity, "block" to p.block,
+            post(xml(KoboConfig.PROJECT_UID, linkedMapOf(
+                "drr_code" to p.drrCode, "block" to p.block, "activity" to p.activity,
                 "sub_block" to p.subBlock, "start_date" to p.startDate, "end_date" to p.endDate)))
             dao.markProjectSynced(p.drrCode); ok++
         } catch (e: java.io.IOException) {
@@ -134,10 +156,14 @@ suspend fun syncAll(dao: AppDao, block: String): String = withContext(Dispatcher
     for (u in dao.unsyncedUpdates()) {
         if (offline) break
         try {
-            val blk = dao.getProject(u.drrCode)?.block ?: block
-            post(xml(KoboConfig.FORM_UID, linkedMapOf(
-                "record_type" to "update",
-                "drr_code" to u.drrCode, "block" to blk, "date" to u.date, "status" to u.status,
+            // Every daily update also carries the project details, so the Daily Updates table in Kobo
+            // can be read on its own (activity, sub-block, start / end date next to the labour numbers).
+            val proj = dao.getProject(u.drrCode)
+            post(xml(KoboConfig.UPDATE_UID, linkedMapOf(
+                "drr_code" to u.drrCode, "block" to (proj?.block ?: block),
+                "activity" to (proj?.activity ?: ""), "sub_block" to (proj?.subBlock ?: ""),
+                "start_date" to (proj?.startDate ?: ""), "end_date" to (proj?.endDate ?: ""),
+                "date" to u.date, "status" to u.status,
                 "progress" to u.progress.toString(), "skilled" to u.skilled.toString(),
                 "unskilled" to u.unskilled.toString())))
             dao.markUpdateSynced(u.drrCode, u.date); ok++
@@ -224,7 +250,7 @@ fun SyncScreen(block: String, dao: AppDao, onLogout: () -> Unit, onSetup: (() ->
         AppCard(Modifier.fillMaxWidth()) {
             Text("Re-send everything", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
             Text(
-                "Only needed once after changing to a new combined Kobo form. Records already in Kobo are sent again, so use it only when you must.",
+                "Normally not needed: changing the form UIDs in Kobo setup already does this. Records already in Kobo are sent again, so use it only when you must.",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Spacer(Modifier.height(10.dp))
@@ -242,7 +268,7 @@ fun SyncScreen(block: String, dao: AppDao, onLogout: () -> Unit, onSetup: (() ->
         AlertDialog(
             onDismissRequest = { confirmResend = false },
             title = { Text("Re-send all data?", fontWeight = FontWeight.Bold) },
-            text = { Text("Every project and daily update on this phone will be sent to Kobo again. Records already in Kobo will appear twice there. Continue only if you changed the Kobo form.") },
+            text = { Text("Every project and daily update on this phone will be sent to Kobo again. Records already in Kobo will appear twice there. Continue only if you must.") },
             confirmButton = {
                 Button({
                     confirmResend = false
@@ -266,11 +292,11 @@ private fun get(url: String): String {
     return t
 }
 
-// All submissions of the combined form, oldest first (so the newest one wins when saved in order)
-private fun fetchAll(query: String? = null): List<JSONObject> {
+// All submissions of one form, oldest first (so the newest one wins when saved in order)
+private fun fetchAll(uid: String, query: String? = null): List<JSONObject> {
     val out = ArrayList<JSONObject>()
     val q = if (query != null) "&query=" + URLEncoder.encode(query, "UTF-8") else ""
-    var url: String? = "${KoboConfig.KF_SERVER}/api/v2/assets/${KoboConfig.FORM_UID}/data/?format=json&limit=1000$q"
+    var url: String? = "${KoboConfig.KF_SERVER}/api/v2/assets/$uid/data/?format=json&limit=1000$q"
     while (url != null) {
         val j = JSONObject(get(url))
         val arr = j.getJSONArray("results")
@@ -284,7 +310,7 @@ private fun fetchAll(query: String? = null): List<JSONObject> {
 
 // Latest account of every block, from Kobo
 private fun fetchAccounts(): List<Account> =
-    fetchAll("{\"record_type\":\"account\"}")
+    fetchAll(KoboConfig.ACCOUNT_UID)
         .filter { it.optString("block").isNotEmpty() }
         .associateBy { it.optString("block") }          // oldest first, so the newest one wins
         .values
@@ -296,8 +322,7 @@ suspend fun sendAccounts(dao: AppDao): String = withContext(Dispatchers.IO) {
     var err = ""
     for (a in dao.unsyncedAccounts()) {
         try {
-            post(xml(KoboConfig.FORM_UID, linkedMapOf(
-                "record_type" to "account", "drr_code" to "ACCOUNT-${a.block}",
+            post(xml(KoboConfig.ACCOUNT_UID, linkedMapOf(
                 "block" to a.block, "email" to a.email, "password" to a.password)))
             dao.markAccountSynced(a.block); ok++
         } catch (e: Exception) {
@@ -335,10 +360,11 @@ suspend fun pullData(dao: AppDao, block: String?): String = withContext(Dispatch
     var kept = 0
     var na = 0
     try {
-        val all = fetchAll()
+        val projectRows = fetchAll(KoboConfig.PROJECT_UID)
+        val updateRows = fetchAll(KoboConfig.UPDATE_UID)
         val codes = HashSet<String>()
         val restoredNew = ArrayList<String>()
-        for (o in all.filter { it.optString("record_type") == "project" }) {
+        for (o in projectRows) {
             val code = o.optString("drr_code")
             val blk = o.optString("block")
             if (code.isEmpty() || (block != null && blk != block)) continue
@@ -351,7 +377,7 @@ suspend fun pullData(dao: AppDao, block: String?): String = withContext(Dispatch
             if (local == null) restoredNew.add(code)
             np++
         }
-        for (o in all.filter { it.optString("record_type") == "update" }) {
+        for (o in updateRows) {
             val code = o.optString("drr_code")
             val date = o.optString("date")
             if (code.isEmpty() || date.isEmpty()) continue

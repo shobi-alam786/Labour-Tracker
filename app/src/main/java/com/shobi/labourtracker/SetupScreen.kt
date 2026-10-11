@@ -20,10 +20,12 @@ import kotlinx.coroutines.launch
 // First-run screen (and Admin > Kobo setup): server, form UID, API token and admin PIN are typed here once
 // and stay on this phone. Nothing is stored in the source code.
 @Composable
-fun SetupScreen(onDone: () -> Unit, onCancel: (() -> Unit)?) {
+fun SetupScreen(onDone: (Boolean) -> Unit, onCancel: (() -> Unit)?) {
     val scope = rememberCoroutineScope()
     var server by remember { mutableStateOf(KoboConfig.KF_SERVER) }
-    var uid by remember { mutableStateOf(KoboConfig.FORM_UID) }
+    var projectUid by remember { mutableStateOf(KoboConfig.PROJECT_UID) }
+    var updateUid by remember { mutableStateOf(KoboConfig.UPDATE_UID) }
+    var accountUid by remember { mutableStateOf(KoboConfig.ACCOUNT_UID) }
     var token by remember { mutableStateOf(KoboConfig.TOKEN) }
     var pin by remember { mutableStateOf(KoboConfig.ADMIN_PIN) }
     var showToken by remember { mutableStateOf(false) }
@@ -33,7 +35,10 @@ fun SetupScreen(onDone: () -> Unit, onCancel: (() -> Unit)?) {
 
     fun validate(): String = when {
         !server.trim().startsWith("https://") -> "Server URL must start with https://"
-        uid.isBlank() -> "Enter the Project / Asset UID."
+        projectUid.isBlank() -> "Enter the Register Project form UID."
+        updateUid.isBlank() -> "Enter the Daily Updates form UID."
+        accountUid.isBlank() -> "Enter the Account Access form UID."
+        setOf(projectUid, updateUid, accountUid).size < 3 -> "The three forms need three different UIDs."
         token.isBlank() -> "Enter the API token."
         pin.length !in 4..8 -> "Admin PIN must be 4 to 8 digits."
         else -> ""
@@ -46,7 +51,7 @@ fun SetupScreen(onDone: () -> Unit, onCancel: (() -> Unit)?) {
         Spacer(Modifier.height(24.dp))
         Text("Kobo setup", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
         Text(
-            "Step 1: connect this phone to your KoboToolbox form. Step 2: log in. " +
+            "Step 1: connect this phone to your three KoboToolbox forms. Step 2: log in. " +
                 "The block members (email + password) are then created by the Admin under Admin login > Block accounts.",
             style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -58,7 +63,15 @@ fun SetupScreen(onDone: () -> Unit, onCancel: (() -> Unit)?) {
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri)
                 )
                 OutlinedTextField(
-                    uid, { uid = it.trim(); msg = "" }, label = { Text("Project / Asset UID") },
+                    projectUid, { projectUid = it.trim(); msg = "" }, label = { Text("Register Project - form UID") },
+                    singleLine = true, modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    updateUid, { updateUid = it.trim(); msg = "" }, label = { Text("Daily Updates - form UID") },
+                    singleLine = true, modifier = Modifier.fillMaxWidth()
+                )
+                OutlinedTextField(
+                    accountUid, { accountUid = it.trim(); msg = "" }, label = { Text("Account Access - form UID") },
                     singleLine = true, modifier = Modifier.fillMaxWidth()
                 )
                 OutlinedTextField(
@@ -81,10 +94,20 @@ fun SetupScreen(onDone: () -> Unit, onCancel: (() -> Unit)?) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             OutlinedButton(
                 onClick = {
-                    busy = true
-                    scope.launch {
-                        val (good, text) = testKoboConnection(server, uid, token)
-                        ok = good; msg = text; busy = false
+                    val problem = validate()
+                    if (problem.isNotEmpty()) {
+                        ok = false; msg = problem
+                    } else {
+                        busy = true
+                        scope.launch {
+                            var good = true
+                            var text = "Connected. All three forms were found."
+                            for ((name, uid) in listOf("Register Project" to projectUid, "Daily Updates" to updateUid, "Account Access" to accountUid)) {
+                                val (g, t) = testKoboConnection(server, uid, token)
+                                if (!g) { good = false; text = "$name: $t"; break }
+                            }
+                            ok = good; msg = text; busy = false
+                        }
                     }
                 },
                 enabled = !busy && token.isNotBlank(),
@@ -94,7 +117,7 @@ fun SetupScreen(onDone: () -> Unit, onCancel: (() -> Unit)?) {
                 onClick = {
                     val problem = validate()
                     if (problem.isNotEmpty()) { ok = false; msg = problem }
-                    else { KoboConfig.save(server, uid, token, pin); onDone() }
+                    else onDone(KoboConfig.save(server, projectUid, updateUid, accountUid, token, pin))
                 },
                 enabled = !busy,
                 modifier = Modifier.weight(1f).height(52.dp), shape = RoundedCornerShape(16.dp)
@@ -103,14 +126,16 @@ fun SetupScreen(onDone: () -> Unit, onCancel: (() -> Unit)?) {
         OutlinedButton(
             onClick = {
                 KoboConfig.clear()
-                server = KoboConfig.KF_SERVER; uid = KoboConfig.FORM_UID; token = KoboConfig.TOKEN; pin = KoboConfig.ADMIN_PIN
+                server = KoboConfig.KF_SERVER; projectUid = KoboConfig.PROJECT_UID; updateUid = KoboConfig.UPDATE_UID; accountUid = KoboConfig.ACCOUNT_UID
+                token = KoboConfig.TOKEN; pin = KoboConfig.ADMIN_PIN
                 ok = true; msg = "Configuration cleared."
             },
             modifier = Modifier.fillMaxWidth().height(52.dp), shape = RoundedCornerShape(16.dp)
         ) { Text("Clear configuration", color = MaterialTheme.colorScheme.error) }
         if (onCancel != null) TextButton(onClick = onCancel, modifier = Modifier.fillMaxWidth()) { Text("Cancel") }
         Text(
-            "Saved only on this phone. Each phone that logs in needs this setup once.",
+            "Saved only on this phone. Each phone that logs in needs this setup once. " +
+                "When a form UID changes, everything on this phone is marked \"not sent yet\" so it is sent once to the new forms.",
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
         )
     }

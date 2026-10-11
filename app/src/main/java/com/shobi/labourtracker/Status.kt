@@ -206,6 +206,9 @@ object StatusEngine {
         if (latest != null && latest.status.equals(ProjectStatus.Completed.label, ignoreCase = true)) {
             return ProjectStatus.Completed
         }
+        // End date is only set when a project is completed (the end-date field was removed from Daily Update).
+        val end = runCatching { LocalDate.parse(dao.getProject(code)?.endDate) }.getOrNull()
+        if (end != null && !end.isAfter(AppTime.today())) return ProjectStatus.Completed
         return if (dao.getUpdate(code, AppTime.today().toString()) != null) ProjectStatus.Ongoing else ProjectStatus.Pending
     }
 }

@@ -2,12 +2,24 @@
 
 Offline-first Android app (Kotlin, Jetpack Compose, Material 3, Room) for daily labour tracking with KoboToolbox sync.
 
+## Three Kobo forms (kobo-forms/ folder)
+
+| Form | File | Holds |
+|---|---|---|
+| Register Project | `1-Register-Project.xlsx` | DRR-code, block, activity, sub-block, start date, end date |
+| Daily Updates | `2-Daily-Updates.xlsx` | every update **plus the project details** (activity, sub-block, start/end date), so this one table reads on its own |
+| Account Access | `3-Account-Access.xlsx` | block, email, password |
+
+In KoboToolbox: *New > Upload an XLSForm* for each file, then **Deploy**. The UID of each form is in its URL
+(`.../#/forms/<UID>/summary`).
+
 ## First run: Kobo setup, then login
 
 No secrets are in the source code. On first start the app opens **Kobo setup**:
-Server URL, Project / Asset UID, API token and an Admin PIN (4-8 digits). Use **Test connection**, then **Save**.
-Then log in. Block members (email + 6/8-digit password) are created by the Admin: *Admin login > Block accounts*.
-Kobo settings can be changed later from *Admin login > Kobo setup*. Each phone needs the setup once; values stay on that phone.
+Server URL, the three form UIDs, API token and an Admin PIN (4-8 digits). Use **Test connection**, then **Save**.
+Then log in. Block members (email + 6/8-digit password) are created by the Admin: *Admin login > Block accounts*, then sent to Kobo.
+When a form UID changes, everything on the phone is marked "not sent yet" and goes once to the new forms.
+Settings can be changed later from *Admin login > Kobo setup*. Each phone needs the setup once; values stay on that phone.
 
 > The old token and PIN were visible in the public GitHub repo. Regenerate the token in KoboToolbox
 > (Account settings > Security) and choose a new PIN. A token typed on a phone is stored in the app's private storage, not encrypted.

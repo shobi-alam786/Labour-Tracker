@@ -36,6 +36,7 @@ fun AdminApp(dao: AppDao, onLogout: () -> Unit) {
     var showUpdate by remember { mutableStateOf(false) }
     var showAccounts by remember { mutableStateOf(false) }
     var showSetup by remember { mutableStateOf(false) }
+    val setupScope = rememberCoroutineScope()
 
     BackHandler(enabled = openProject != null || showReport || showUpdate || showAccounts || showSetup || openBlock != null) {
         when {
@@ -51,7 +52,7 @@ fun AdminApp(dao: AppDao, onLogout: () -> Unit) {
     val proj = openProject?.let { byCode[it] }
     val blk = openBlock
     when {
-        showSetup -> SetupScreen(onDone = { showSetup = false }, onCancel = { showSetup = false })
+        showSetup -> SetupScreen(onDone = { changed -> if (changed) setupScope.launch { dao.markAllUnsynced() }; showSetup = false }, onCancel = { showSetup = false })
         proj != null -> ProjectDetailScreen(proj, entries, null)
         showReport -> AdminReportScreen(entries)
         showAccounts -> AccountsScreen(dao)

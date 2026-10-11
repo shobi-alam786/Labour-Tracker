@@ -87,6 +87,9 @@ fun App() {
     var listFilter by remember { mutableStateOf(StatusFilter.All) }
     var showSetup by remember { mutableStateOf(!KoboConfig.configured) }
 
+    // One time after the upgrade to three Kobo forms: mark everything on the phone as "not sent yet".
+    LaunchedEffect(Unit) { if (KoboConfig.consumeFormsMigration()) dao.markAllUnsynced() }
+
     // Android 13+: ask once for the notification permission (needed to show the 9:30 reminder).
     val notifLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
@@ -96,7 +99,7 @@ fun App() {
     }
     // First run (or Kobo cleared): set up Kobo first, then log in.
     if (showSetup) {
-        SetupScreen(onDone = { showSetup = false }, onCancel = if (KoboConfig.configured) ({ showSetup = false }) else null)
+        SetupScreen(onDone = { changed -> if (changed) scope.launch { dao.markAllUnsynced() }; showSetup = false }, onCancel = if (KoboConfig.configured) ({ showSetup = false }) else null)
         return
     }
     val b = block

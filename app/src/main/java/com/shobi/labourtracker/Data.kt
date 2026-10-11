@@ -33,7 +33,7 @@ data class DailyUpdate(
     val synced: Boolean = false
 )
 
-// Login of one block (set by the Admin, also stored in Kobo as record_type "account")
+// Login of one block (set by the Admin, also stored in the Kobo "Account Access" form)
 @Entity(tableName = "accounts")
 data class Account(
     @PrimaryKey val block: String,
@@ -95,6 +95,9 @@ interface AppDao {
     @Query("UPDATE projects SET synced = 0")
     suspend fun markAllProjectsUnsynced()
 
+    @Query("UPDATE accounts SET synced = 0")
+    suspend fun markAllAccountsUnsynced()
+
     @Query("UPDATE daily_updates SET synced = 0")
     suspend fun markAllUpdatesUnsynced()
 
@@ -127,7 +130,7 @@ interface AppDao {
     suspend fun latestUpdateDate(code: String): String?
 }
 
-suspend fun AppDao.markAllUnsynced() { markAllProjectsUnsynced(); markAllUpdatesUnsynced() }
+suspend fun AppDao.markAllUnsynced() { markAllProjectsUnsynced(); markAllUpdatesUnsynced(); markAllAccountsUnsynced() }
 
 private val MIGRATION_1_2 = object : Migration(1, 2) {
     override fun migrate(db: SupportSQLiteDatabase) {
