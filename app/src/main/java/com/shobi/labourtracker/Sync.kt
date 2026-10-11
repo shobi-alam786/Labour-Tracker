@@ -117,8 +117,7 @@ private class Outgoing(val xml: String, val key: String, val instanceId: String)
 private fun xml(formId: String, key: String, f: Map<String, String>): Outgoing {
     val body = f.entries.joinToString("") { "<${it.key}>${esc(it.value)}</${it.key}>" }
     val newId = "uuid:${UUID.randomUUID()}"
-    val old = KoboConfig.lastInstanceId(key)
-    val deprecated = if (old != null) "<deprecatedID>$old</deprecatedID>" else ""
+    val deprecated = ""
     return Outgoing("<$formId id=\"$formId\">$body<meta><instanceID>$newId</instanceID>$deprecated</meta></$formId>", key, newId)
 }
 
@@ -144,8 +143,40 @@ private fun post(out: Outgoing): Boolean {
         ?.bufferedReader()?.use { it.readText() }?.take(200) ?: ""
     c.disconnect()
     if (code != 201 && code != 202) throw Exception("HTTP $code $body")
-    KoboConfig.rememberInstanceId(out.key, out.instanceId)
     return true
+}
+
+// ---- Replace instead of duplicate ----
+// Before a record is sent, Kobo is asked for submissions that already hold it (same key). The new version is
+// posted FIRST (nothing is lost if that fails) and the old submission(s) are deleted afterwards, so Kobo ends
+// with exactly one row per record. This also removes older duplicates of that record.
+private fun findIds(uid: String, key: Map<String, String>): List<Long> {
+    return try {
+        val q = java.net.URLEncoder.encode(JSONObject(key).toString(), "UTF-8")
+        val json = JSONObject(get("${KoboConfig.KF_SERVER}/api/v2/assets/$uid/data/?format=json&limit=1000&query=$q"))
+        val arr = json.optJSONArray("results") ?: return emptyList()
+        (0 until arr.length()).map { arr.getJSONObject(it).optLong("_id") }.filter { it > 0 }
+    } catch (e: java.io.IOException) {
+        throw e                      // offline: the caller stops and retries later
+    } catch (e: Exception) {
+        emptyList()                  // query not accepted: still send (worst case: a duplicate)
+    }
+}
+
+private fun deleteIds(uid: String, ids: List<Long>) {
+    for (id in ids) {
+        try {
+            val c = URL("${KoboConfig.KF_SERVER}/api/v2/assets/$uid/data/$id/").openConnection() as HttpURLConnection
+            c.requestMethod = "DELETE"
+            c.connectTimeout = 15000
+            c.readTimeout = 20000
+            c.setRequestProperty("Authorization", "Token ${KoboConfig.TOKEN}")
+            c.responseCode
+            c.disconnect()
+        } catch (e: Exception) {
+            // best effort: a leftover old row is removed the next time this record is sent
+        }
+    }
 }
 
 // Only one send at a time: two overlapping syncs could post the same unsent record twice.
@@ -159,9 +190,11 @@ suspend fun syncAll(dao: AppDao, block: String): String = withContext(Dispatcher
     for (p in dao.unsyncedProjects()) {
         if (offline) break
         try {
+            val before = findIds(KoboConfig.PROJECT_UID, mapOf("drr_code" to p.drrCode))
             post(xml(KoboConfig.PROJECT_UID, "p:${KoboConfig.PROJECT_UID}:${p.drrCode}", linkedMapOf(
                 "drr_code" to p.drrCode, "block" to p.block, "activity" to p.activity,
                 "sub_block" to p.subBlock, "start_date" to p.startDate, "end_date" to p.endDate)))
+            deleteIds(KoboConfig.PROJECT_UID, before)
             dao.markProjectSynced(p.drrCode); ok++
         } catch (e: java.io.IOException) {
             offline = true; fail++; if (firstError.isEmpty()) firstError = "No internet (${e.message})"
@@ -175,6 +208,7 @@ suspend fun syncAll(dao: AppDao, block: String): String = withContext(Dispatcher
             // Every daily update also carries the project details, so the Daily Updates table in Kobo
             // can be read on its own (activity, sub-block, start / end date next to the labour numbers).
             val proj = dao.getProject(u.drrCode)
+            val before = findIds(KoboConfig.UPDATE_UID, mapOf("drr_code" to u.drrCode, "date" to u.date))
             post(xml(KoboConfig.UPDATE_UID, "u:${KoboConfig.UPDATE_UID}:${u.drrCode}:${u.date}", linkedMapOf(
                 "drr_code" to u.drrCode, "block" to (proj?.block ?: block),
                 "activity" to (proj?.activity ?: ""), "sub_block" to (proj?.subBlock ?: ""),
@@ -182,6 +216,7 @@ suspend fun syncAll(dao: AppDao, block: String): String = withContext(Dispatcher
                 "date" to u.date, "status" to u.status,
                 "progress" to u.progress.toString(), "skilled" to u.skilled.toString(),
                 "unskilled" to u.unskilled.toString())))
+            deleteIds(KoboConfig.UPDATE_UID, before)
             dao.markUpdateSynced(u.drrCode, u.date); ok++
         } catch (e: java.io.IOException) {
             offline = true; fail++; if (firstError.isEmpty()) firstError = "No internet (${e.message})"
@@ -205,7 +240,7 @@ private fun syncFailed(msg: String): Boolean =
         Regex("Failed: [1-9]").containsMatchIn(msg)
 
 @Composable
-fun SyncScreen(block: String, dao: AppDao, onLogout: () -> Unit, onSetup: (() -> Unit)? = null) {
+fun SyncScreen(block: String, dao: AppDao, onLogout: () -> Unit, onSetup: (() -> Unit)? = null, update: UpdateInfo? = null) {
     val scope = rememberCoroutineScope()
     var msg by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
@@ -266,7 +301,7 @@ fun SyncScreen(block: String, dao: AppDao, onLogout: () -> Unit, onSetup: (() ->
         AppCard(Modifier.fillMaxWidth()) {
             Text("Re-send everything", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
             Text(
-                "Normally not needed: changing the form UIDs in Kobo setup already does this. Records already sent are updated in Kobo, not duplicated.",
+                "Normally not needed: changing the form UIDs in Kobo setup already does this. Records already in Kobo are replaced, not duplicated.",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Spacer(Modifier.height(10.dp))
@@ -276,6 +311,8 @@ fun SyncScreen(block: String, dao: AppDao, onLogout: () -> Unit, onSetup: (() ->
             ) { Text("Re-send all my data") }
         }
 
+        UpdateSection(update)
+
         OutlinedButton(onClick = onLogout, modifier = Modifier.fillMaxWidth().height(52.dp), shape = RoundedCornerShape(16.dp)) { Text("Log out") }
         Text("Data on this phone stays. Log in again with your email and password.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
@@ -284,7 +321,7 @@ fun SyncScreen(block: String, dao: AppDao, onLogout: () -> Unit, onSetup: (() ->
         AlertDialog(
             onDismissRequest = { confirmResend = false },
             title = { Text("Re-send all data?", fontWeight = FontWeight.Bold) },
-            text = { Text("Every project and daily update on this phone will be sent to Kobo again. Records already sent by this version are updated in place, not duplicated.") },
+            text = { Text("Every project and daily update on this phone will be sent to Kobo again. Each record replaces its old row in Kobo, so there is no duplicate.") },
             confirmButton = {
                 Button({
                     confirmResend = false
@@ -338,8 +375,10 @@ suspend fun sendAccounts(dao: AppDao): String = withContext(Dispatchers.IO) {
     var err = ""
     for (a in dao.unsyncedAccounts()) {
         try {
+            val before = findIds(KoboConfig.ACCOUNT_UID, mapOf("block" to a.block))
             post(xml(KoboConfig.ACCOUNT_UID, "a:${KoboConfig.ACCOUNT_UID}:${a.block}", linkedMapOf(
                 "block" to a.block, "email" to a.email, "password" to a.password)))
+            deleteIds(KoboConfig.ACCOUNT_UID, before)
             dao.markAccountSynced(a.block); ok++
         } catch (e: Exception) {
             if (err.isEmpty()) err = e.message ?: "error"

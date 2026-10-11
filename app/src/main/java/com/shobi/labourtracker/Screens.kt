@@ -41,7 +41,8 @@ fun DashboardScreen(
     entries: List<DailyEntry>,
     loading: Boolean,
     go: (String) -> Unit,
-    today: LocalDate = AppTime.today()
+    today: LocalDate = AppTime.today(),
+    update: UpdateInfo? = null
 ) {
     val ctx = LocalContext.current
     val todayEntries = entries.filter { it.date == today }
@@ -78,6 +79,13 @@ fun DashboardScreen(
             }
             Surface(shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.primaryContainer) {
                 Text("B$block", Modifier.padding(horizontal = 15.dp, vertical = 11.dp), fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimaryContainer)
+            }
+        }
+
+        if (update != null) {
+            AppCard(Modifier.fillMaxWidth(), onClick = { go("sync") }) {
+                Text("Update ${update.version} available", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                Text("Tap to download and install the new version.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
 

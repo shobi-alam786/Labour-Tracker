@@ -86,6 +86,7 @@ fun App() {
     var detailBack by remember { mutableStateOf("menu") }
     var listFilter by remember { mutableStateOf(StatusFilter.All) }
     var showSetup by remember { mutableStateOf(!KoboConfig.configured) }
+    var update by remember { mutableStateOf<UpdateInfo?>(null) }
 
     // One time after the upgrade to three Kobo forms: mark everything on the phone as "not sent yet".
     LaunchedEffect(Unit) { if (KoboConfig.consumeFormsMigration()) dao.markAllUnsynced() }
@@ -121,6 +122,18 @@ fun App() {
         if (ReminderHealth.needsNotificationPermission(ctx) && !ReminderPrefs.notificationAsked(ctx)) {
             ReminderPrefs.setNotificationAsked(ctx)
             notifLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+
+    // Looks for a newer GitHub release (at most every 12 hours; silent when offline).
+    LaunchedEffect(b) {
+        val last = prefs.getLong("update_checked_at", 0L)
+        if (System.currentTimeMillis() - last > 12 * 3600 * 1000L) {
+            val (found, text) = Updater.check()
+            if (!text.startsWith("No internet") && !text.startsWith("Error")) {
+                prefs.edit().putLong("update_checked_at", System.currentTimeMillis()).apply()
+            }
+            update = found
         }
     }
 
@@ -189,7 +202,7 @@ fun App() {
     ) { padding ->
         Box(Modifier.padding(padding).fillMaxSize()) {
             when (screen) {
-                "menu" -> DashboardScreen(b, projects, entries, loading, { go(it) })
+                "menu" -> DashboardScreen(b, projects, entries, loading, { go(it) }, update = update)
                 "projects" -> ProjectsScreen(projects, entries, loading, listFilter, { go("project:$it") }, { screen = "register" })
                 "register" -> RegisterProjectScreen(b, everyProject.associateBy { it.drrCode }) { p ->
                     saveThen { dao.saveProject(p) }
@@ -220,7 +233,7 @@ fun App() {
                 "report" -> ReportScreen(b, entries)
                 "projectupdate" -> ProjectUpdateScreen(listOf(b), projects, entries)
                 "reminder" -> ReminderScreen()
-                "sync" -> SyncScreen(b, dao, { prefs.edit().remove("block").apply(); block = null; screen = "menu" }, { showSetup = true })
+                "sync" -> SyncScreen(b, dao, { prefs.edit().remove("block").apply(); block = null; screen = "menu" }, { showSetup = true }, update)
             }
         }
     }

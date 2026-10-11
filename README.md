@@ -47,3 +47,19 @@ Stored in the existing `projects.status` column (no database change, version sta
 - Re-scheduled on app start, reboot, app update, clock/time-zone change and exact-alarm permission change.
 - Home > Daily reminder shows notification / exact-alarm / battery state and has a test button.
 - Only the logged-in block member's phone is checked; admin phones are not.
+
+## Updating phones without Google Play (GitHub)
+1. Upload the project files to the GitHub repo (replace the old ones).
+2. Repo > **Releases > Draft a new release**, tag `v1.2` (new tag), **Publish**. The *Build APK* workflow runs and attaches `LabourTracker-v1.2.apk` to the release. (Or *Actions > Build APK > Run workflow* and download the `apk` artifact.)
+3. On the phone: open the release page, download the APK, tap it, allow "install unknown apps". It installs over the old app **only if signed with the same key**.
+
+Same key on every build (one time): run `keytool -genkeypair -v -keystore labour.jks -alias labour -keyalg RSA -keysize 2048 -validity 10000`, convert to text
+(Linux/Mac `base64 -w0 labour.jks`, Windows PowerShell `[Convert]::ToBase64String([IO.File]::ReadAllBytes("labour.jks"))`) and add repo secrets
+`KEYSTORE_BASE64`, `KEYSTORE_PASSWORD`, `KEY_ALIAS` (labour), `KEY_PASSWORD`. Keep `labour.jks` safe; never commit it.
+
+## In-app update (no Google Play)
+The app checks the newest GitHub Release of `shobi-alam786/Labour-Tracker` (repo must be public) at start (at most every 12 hours) and from
+*Kobo sync > App update*. If a newer version exists the Home screen shows "Update x.y available"; tapping it downloads the APK and opens
+Android's installer (the user allows "Install unknown apps" once and taps Install).
+To publish an update: create a Release with a **higher tag** than the last one (`v1.2`, `v1.3`, ...). The workflow builds it, names the version
+from the tag and attaches the APK. Use the same signing key every time (see above), otherwise Android refuses to install over the old app.

@@ -128,6 +128,7 @@ private fun AdminHome(
         Button(onProjectUpdate, Modifier.fillMaxWidth()) { Text("Daily project update (per block)") }
         Button(onAccounts, Modifier.fillMaxWidth()) { Text("Block accounts (email & password)") }
         Button(onKoboSetup, Modifier.fillMaxWidth()) { Text("Kobo setup (server, token, PIN)") }
+        UpdateSection(null)
         OutlinedButton(onLogout, Modifier.fillMaxWidth()) { Text("Log out") }
         Spacer(Modifier.height(8.dp))
     }
