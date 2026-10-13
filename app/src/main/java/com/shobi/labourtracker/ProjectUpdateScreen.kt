@@ -28,9 +28,7 @@ fun ProjectUpdateScreen(blocks: List<String>, projects: List<Project>, entries: 
     val clipboard = LocalClipboardManager.current
     var block by remember { mutableStateOf(blocks.first()) }
     var date by remember { mutableStateOf(AppTime.today()) }
-    var dateMenu by remember { mutableStateOf(false) }
     var copied by remember { mutableStateOf(false) }
-    val dateOptions = remember { (0..30).map { AppTime.today().minusDays(it.toLong()) } }
     val dateFormat = remember { DateTimeFormatter.ofPattern("EEE, dd MMM yyyy", Locale.ENGLISH) }
     val text = remember(block, date, projects, entries) {
         ProjectUpdateMessage.build(date, projects.filter { it.block == block }, entries)
@@ -50,16 +48,7 @@ fun ProjectUpdateScreen(blocks: List<String>, projects: List<Project>, entries: 
         } else {
             Text("Block $block", color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        Box {
-            OutlinedButton({ dateMenu = true }, Modifier.fillMaxWidth()) {
-                Text("Date: ${date.format(dateFormat)}  ⌄")
-            }
-            DropdownMenu(expanded = dateMenu, onDismissRequest = { dateMenu = false }) {
-                dateOptions.forEach { d ->
-                    DropdownMenuItem(text = { Text(d.format(dateFormat)) }, onClick = { date = d; dateMenu = false; copied = false })
-                }
-            }
-        }
+        DateField("DATE", date, { date = it; copied = false })
         Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceContainerLow, tonalElevation = 1.dp) {
             Text(text, Modifier.padding(16.dp).fillMaxWidth(), fontFamily = FontFamily.Monospace, fontSize = 12.sp)
         }

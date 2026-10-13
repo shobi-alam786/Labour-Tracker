@@ -355,7 +355,6 @@ fun DailyUpdateScreen(projects: List<Project>, updatedToday: Set<String>, onSave
     var error by remember { mutableStateOf("") }
     val scroll = rememberScrollState()
     val numberKeyboard = KeyboardOptions(keyboardType = KeyboardType.Number)
-    var showDatePicker by remember { mutableStateOf(false) }
     val dateFormat = remember { DateTimeFormatter.ofPattern("EEE, dd MMM yyyy", Locale.ENGLISH) }
     fun dateNote(d: LocalDate) = when (d) {
         AppTime.today() -> "Today"
@@ -454,52 +453,7 @@ fun DailyUpdateScreen(projects: List<Project>, updatedToday: Set<String>, onSave
                 )
             }
 
-            // Date: tap to open the calendar
-            Text("DATE", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-            Surface(
-                onClick = { showDatePicker = true },
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(20.dp),
-                color = MaterialTheme.colorScheme.surfaceContainerLow,
-                tonalElevation = 1.dp
-            ) {
-                Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Surface(shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.primaryContainer) {
-                        Text("▣", Modifier.padding(horizontal = 13.dp, vertical = 10.dp), fontSize = 20.sp, color = MaterialTheme.colorScheme.primary)
-                    }
-                    Spacer(Modifier.width(12.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(date.format(dateFormat), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                        if (dateNote(date).isNotEmpty()) {
-                            Text(dateNote(date), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
-                        }
-                    }
-                    Text("⌄", fontSize = 24.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
-            if (showDatePicker) {
-                val pickerState = rememberDatePickerState(
-                    initialSelectedDateMillis = date.atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli(),
-                    selectableDates = object : SelectableDates {
-                        // no future dates
-                        override fun isSelectableDate(utcTimeMillis: Long) =
-                            !Instant.ofEpochMilli(utcTimeMillis).atZone(ZoneOffset.UTC).toLocalDate().isAfter(AppTime.today())
-                    }
-                )
-                DatePickerDialog(
-                    onDismissRequest = { showDatePicker = false },
-                    confirmButton = {
-                        TextButton({
-                            pickerState.selectedDateMillis?.let {
-                                date = Instant.ofEpochMilli(it).atZone(ZoneOffset.UTC).toLocalDate()
-                                error = ""
-                            }
-                            showDatePicker = false
-                        }) { Text("OK") }
-                    },
-                    dismissButton = { TextButton({ showDatePicker = false }) { Text("CANCEL") } }
-                ) { DatePicker(state = pickerState) }
-            }
+            DateField("DATE", date, { date = it; error = "" }, note = dateNote(date))
 
             // Progress card
             Surface(shape = RoundedCornerShape(22.dp), color = MaterialTheme.colorScheme.surfaceContainerLow, tonalElevation = 1.dp) {

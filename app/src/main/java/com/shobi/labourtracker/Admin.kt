@@ -145,7 +145,7 @@ private fun AdminReportScreen(entries: List<DailyEntry>) {
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         Text("All Blocks Report", style = MaterialTheme.typography.titleLarge)
-        OutlinedTextField(date, { date = it }, label = { Text("Report date (yyyy-MM-dd)") }, modifier = Modifier.fillMaxWidth())
+        DateField("REPORT DATE", d ?: AppTime.today(), { date = it.toString() })
         Text(text, fontFamily = FontFamily.Monospace, fontSize = 13.sp)
         Button({ shareToWhatsApp(ctx, text) }, Modifier.fillMaxWidth(), enabled = d != null) { Text("Send on WhatsApp") }
     }

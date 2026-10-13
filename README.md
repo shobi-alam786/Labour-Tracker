@@ -63,3 +63,9 @@ The app checks the newest GitHub Release of `shobi-alam786/Labour-Tracker` (repo
 Android's installer (the user allows "Install unknown apps" once and taps Install).
 To publish an update: create a Release with a **higher tag** than the last one (`v1.2`, `v1.3`, ...). The workflow builds it, names the version
 from the tag and attaches the APK. Use the same signing key every time (see above), otherwise Android refuses to install over the old app.
+
+## QR code for the API key
+First-run screen shows a live camera ("Scan configuration QR code") with **Enter API key manually** below it (like ODK Collect). The QR may contain just the API key, or JSON:
+`{"token":"...","server":"https://kf.kobotoolbox.org","project_uid":"..","update_uid":"..","account_uid":".."}` (server and UIDs optional).
+Create the QR **offline** (the key is a secret; do not use online QR websites). Example: `pip install qrcode[pil]`, then `python -c "import qrcode; qrcode.make('YOUR_KEY').save('key.png')"`.
+Uses CameraX for the picture and ML Kit for reading (the reading model comes from Google Play services; the first scan may need internet once). Needs the camera permission.

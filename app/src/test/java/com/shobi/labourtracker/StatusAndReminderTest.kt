@@ -136,4 +136,9 @@ class StatusAndReminderTest {
         assertTrue(plan.toPending.isEmpty())
         assertEquals(listOf("B"), plan.toOngoing.map { it.drrCode })
     }
+
+    @Test fun setupQrPlainToken() {
+        assertEquals("abc123", parseSetupQr("  abc123 \n").token)
+        assertEquals(null, parseSetupQr("abc123").server)
+    }
 }

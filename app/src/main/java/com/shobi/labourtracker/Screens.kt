@@ -151,10 +151,6 @@ fun DashboardScreen(
             ActionCard(Icons.Filled.Refresh, "Kobo sync", "Send / restore", { go("sync") }, Modifier.weight(1f))
             ActionCard(Icons.Filled.Email, "Project update", "Daily message", { go("projectupdate") }, Modifier.weight(1f))
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
-            ActionCard(Icons.AutoMirrored.Filled.List, "WhatsApp report", "Block totals", { go("report") }, Modifier.weight(1f))
-            Spacer(Modifier.weight(1f))
-        }
 
         // Reminder
         AppCard(Modifier.fillMaxWidth(), onClick = { go("reminder") }) {
@@ -235,14 +231,20 @@ private fun StatusCard(status: ProjectStatus, count: Int, modifier: Modifier, on
 
 @Composable
 private fun ActionCard(icon: ImageVector, title: String, subtitle: String, onClick: () -> Unit, modifier: Modifier) {
-    Surface(onClick = onClick, modifier = modifier, shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceContainerLow, tonalElevation = 1.dp) {
-        Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+    Surface(
+        onClick = onClick,
+        modifier = modifier.height(116.dp),
+        shape = RoundedCornerShape(20.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        tonalElevation = 1.dp
+    ) {
+        Column(Modifier.fillMaxSize().padding(14.dp), verticalArrangement = Arrangement.SpaceBetween) {
             Surface(shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.primaryContainer) {
                 Icon(icon, contentDescription = null, modifier = Modifier.padding(10.dp), tint = MaterialTheme.colorScheme.onPrimaryContainer)
             }
             Column {
-                Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-                Text(subtitle, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, maxLines = 1)
+                Text(subtitle, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
             }
         }
     }
@@ -281,9 +283,11 @@ fun RegisterProjectScreen(block: String, existing: Map<String, Project>, onSave:
                     subBlock, { subBlock = it.trim().uppercase(); error = "" }, label = { Text("Sub-block (e.g. A06)") },
                     singleLine = true, modifier = Modifier.fillMaxWidth()
                 )
-                OutlinedTextField(
-                    start, { start = it.trim(); error = "" }, label = { Text("Start date (yyyy-MM-dd)") },
-                    singleLine = true, modifier = Modifier.fillMaxWidth()
+                DateField(
+                    "START DATE",
+                    runCatching { LocalDate.parse(start) }.getOrDefault(AppTime.today()),
+                    { start = it.toString(); error = "" },
+                    allowFuture = true
                 )
             }
         }

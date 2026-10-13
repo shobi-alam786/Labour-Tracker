@@ -11,7 +11,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -19,6 +19,12 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneOffset
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 
 // ---------------------------------------------------------------------------
 // Theme: one light scheme for the whole app (readable outdoors)
@@ -145,6 +151,64 @@ fun MessageBanner(kind: BannerKind, text: String, modifier: Modifier = Modifier)
         Row(Modifier.padding(14.dp), verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Icon(icon, contentDescription = null, tint = fg, modifier = Modifier.size(20.dp))
             Text(text, color = fg, style = MaterialTheme.typography.bodyMedium)
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// One date control for the whole app: a card that opens the calendar popup (same as the Daily Update screen).
+// ---------------------------------------------------------------------------
+private val pickerDateFormat: DateTimeFormatter = DateTimeFormatter.ofPattern("EEEE, dd MMM yyyy", Locale.ENGLISH)
+
+@Composable
+fun DateField(
+    label: String,
+    date: LocalDate,
+    onChange: (LocalDate) -> Unit,
+    modifier: Modifier = Modifier,
+    note: String = "",
+    allowFuture: Boolean = false
+) {
+    var show by remember { mutableStateOf(false) }
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(label, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+        Surface(
+            onClick = { show = true },
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(20.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerLow,
+            tonalElevation = 1.dp
+        ) {
+            Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Surface(shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.primaryContainer) {
+                    Text("▣", Modifier.padding(horizontal = 13.dp, vertical = 10.dp), fontSize = 20.sp, color = MaterialTheme.colorScheme.primary)
+                }
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(date.format(pickerDateFormat), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    if (note.isNotEmpty()) Text(note, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                }
+                Text("⌄", fontSize = 24.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        if (show) {
+            val pickerState = rememberDatePickerState(
+                initialSelectedDateMillis = date.atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli(),
+                selectableDates = object : SelectableDates {
+                    override fun isSelectableDate(utcTimeMillis: Long) =
+                        allowFuture || !Instant.ofEpochMilli(utcTimeMillis).atZone(ZoneOffset.UTC).toLocalDate().isAfter(AppTime.today())
+                }
+            )
+            DatePickerDialog(
+                onDismissRequest = { show = false },
+                confirmButton = {
+                    TextButton({
+                        pickerState.selectedDateMillis?.let { onChange(Instant.ofEpochMilli(it).atZone(ZoneOffset.UTC).toLocalDate()) }
+                        show = false
+                    }) { Text("OK") }
+                },
+                dismissButton = { TextButton({ show = false }) { Text("CANCEL") } }
+            ) { DatePicker(state = pickerState) }
         }
     }
 }
