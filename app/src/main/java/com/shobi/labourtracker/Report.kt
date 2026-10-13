@@ -16,7 +16,8 @@ data class DailyEntry(
     val activity: String,
     val skilled: Int,
     val unskilled: Int,
-    val progress: Int = 0
+    val progress: Int = 0,
+    val auto: Boolean = false   // automatic 0-labour row created by the 9:30 check (no real update was entered)
 )
 
 data class Totals(val skilled: Int, val unskilled: Int)

@@ -118,7 +118,8 @@ fun App() {
     LaunchedEffect(b) {
         ReminderScheduler.scheduleNext(ctx)
         StatusEngine.backfillCompletedOnce(dao, prefs)
-        StatusEngine.runDailyCheck(dao, b, AppTime.now())
+        val check = StatusEngine.runDailyCheck(dao, b, AppTime.now())
+        if (check.created > 0) syncAll(dao, b)   // send the automatic 0-labour rows
         if (ReminderHealth.needsNotificationPermission(ctx) && !ReminderPrefs.notificationAsked(ctx)) {
             ReminderPrefs.setNotificationAsked(ctx)
             notifLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
@@ -208,7 +209,7 @@ fun App() {
                     saveThen { dao.saveProject(p) }
                     screen = "menu"
                 }
-                "update" -> DailyUpdateScreen(projects, entries.filter { it.date == AppTime.today() }.map { it.drrCode }.toSet()) { u, p ->
+                "update" -> DailyUpdateScreen(projects, entries.filter { it.date == AppTime.today() && !it.auto }.map { it.drrCode }.toSet()) { u, p ->
                     saveThen {
                         if (p != null) StatusEngine.saveProjectKeepingStatus(dao, p)
                         val latestBefore = dao.latestUpdateDate(u.drrCode)   // read BEFORE saving

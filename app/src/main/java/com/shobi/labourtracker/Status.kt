@@ -67,6 +67,9 @@ object AppTime {
 // Pure rules (no database, no Android) - covered by unit tests
 // ---------------------------------------------------------------------------
 object StatusRules {
+    // Status text of the automatic row the 9:30 check stores (0 skilled, 0 unskilled) when no update was entered.
+    const val AUTO_ZERO_STATUS = "Pending"
+    fun isAutoZero(u: DailyUpdate): Boolean = u.status.equals(AUTO_ZERO_STATUS, ignoreCase = true)
 
     // Active = not Completed, and already started. A Completed project is never touched.
     fun isActive(p: Project, today: LocalDate): Boolean {
@@ -78,7 +81,8 @@ object StatusRules {
     // Projects that have an update dated exactly `today`. Yesterday or older never counts.
     fun codesUpdatedOn(updates: List<DailyUpdate>, today: LocalDate): Set<String> {
         val d = today.toString()
-        return updates.filter { it.date == d }.map { it.drrCode }.toSet()
+        // Automatic zero rows are NOT updates: the project stays Pending until a real update is saved.
+        return updates.filter { it.date == d && !isAutoZero(it) }.map { it.drrCode }.toSet()
     }
 
     // Active projects that still lack today's update (these are listed in the notification).
@@ -169,20 +173,38 @@ object StatusEngine {
     // Manual reopen (the only way out of Completed).
     suspend fun reopen(dao: AppDao, code: String) {
         val today = AppTime.today().toString()
-        val hasToday = dao.getUpdate(code, today) != null
+        val hasToday = dao.getUpdate(code, today)?.let { !StatusRules.isAutoZero(it) } == true
         dao.setStatus(code, (if (hasToday) ProjectStatus.Ongoing else ProjectStatus.Pending).label)
     }
 
+    class CheckResult(val missing: List<Project>, val created: Int)
+
     // The 9:30 check, also used as a silent catch-up when the app opens.
-    // Marks active projects Pending / Ongoing and returns every active project that still lacks today's update.
-    suspend fun runDailyCheck(dao: AppDao, block: String, now: ZonedDateTime): List<Project> {
+    // From 09:30 on a working day, every active project without a real update for today
+    //  - is marked Pending, and
+    //  - gets an automatic row for today with 0 skilled / 0 unskilled (progress carried over, status "Pending"),
+    //    which is saved as "not sent yet" and goes to Kobo with the normal sync.
+    // A real update saved later replaces that row (same project + date). Completed projects are never touched.
+    suspend fun runDailyCheck(dao: AppDao, block: String, now: ZonedDateTime): CheckResult {
         val today = now.withZoneSameInstant(AppTime.ZONE).toLocalDate()
         val projects = dao.projectsOfBlock(block)
-        val updatedToday = dao.updatesOn(today.toString()).map { it.drrCode }.toSet()
-        val plan = StatusRules.plan(projects, updatedToday, today, allowPending = AppTime.reminderDue(now))
+        val updatedToday = StatusRules.codesUpdatedOn(dao.updatesOn(today.toString()), today)
+        val due = AppTime.reminderDue(now)
+        val plan = StatusRules.plan(projects, updatedToday, today, allowPending = due)
         plan.toPending.forEach { dao.setStatus(it.drrCode, ProjectStatus.Pending.label) }
         plan.toOngoing.forEach { dao.setStatus(it.drrCode, ProjectStatus.Ongoing.label) }
-        return StatusRules.missing(projects, updatedToday, today)
+        val missing = StatusRules.missing(projects, updatedToday, today)
+        var created = 0
+        if (due) {
+            for (p in missing) {
+                val progress = dao.latestUpdate(p.drrCode)?.progress ?: 0
+                val id = dao.insertUpdateIfAbsent(
+                    DailyUpdate(p.drrCode, today.toString(), StatusRules.AUTO_ZERO_STATUS, progress, 0, 0)
+                )
+                if (id >= 0) created++
+            }
+        }
+        return CheckResult(missing, created)
     }
 
     // One-time upgrade step. Before this version "Completed" was only derived from the newest update.
@@ -209,6 +231,6 @@ object StatusEngine {
         // End date is only set when a project is completed (the end-date field was removed from Daily Update).
         val end = runCatching { LocalDate.parse(dao.getProject(code)?.endDate) }.getOrNull()
         if (end != null && !end.isAfter(AppTime.today())) return ProjectStatus.Completed
-        return if (dao.getUpdate(code, AppTime.today().toString()) != null) ProjectStatus.Ongoing else ProjectStatus.Pending
+        return if (dao.getUpdate(code, AppTime.today().toString())?.let { !StatusRules.isAutoZero(it) } == true) ProjectStatus.Ongoing else ProjectStatus.Pending
     }
 }

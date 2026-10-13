@@ -22,6 +22,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import java.time.LocalDate
 import java.time.LocalTime
 import java.time.ZonedDateTime
@@ -154,15 +155,22 @@ object ReminderRunner {
 
         // 4) Compare against TODAY's saved updates (history never counts). Marks Pending / Ongoing.
         val dao = AppDb.get(ctx).dao()
-        val missing = StatusEngine.runDailyCheck(dao, block, now)
-        if (missing.isEmpty()) return
+        val result = StatusEngine.runDailyCheck(dao, block, now)
+        val missing = result.missing
 
         // 5) Notify once per day.
         val today = now.toLocalDate()
         val timeOk = isAlarm || now.toLocalTime().isBefore(LATE_CUTOFF)
-        if (timeOk && !ReminderPrefs.alreadyNotified(ctx, today)) {
+        if (missing.isNotEmpty() && timeOk && !ReminderPrefs.alreadyNotified(ctx, today)) {
             ReminderNotifier.showMissing(ctx, missing)
             ReminderPrefs.markNotified(ctx, today)
+        }
+
+        // 6) Best effort: send the new 0-labour rows to Kobo right away. If there is no internet (or this takes
+        //    too long) they stay "not sent yet" and go with the next sync.
+        if (result.created > 0) {
+            KoboConfig.init(ctx)
+            if (KoboConfig.configured) withTimeoutOrNull(8000) { syncAll(dao, block) }
         }
     }
 }

@@ -128,7 +128,7 @@ fun ProjectCard(project: Project, entries: List<DailyEntry>, today: java.time.Lo
     val last = entries.maxByOrNull { it.date }
     val progress = (last?.progress ?: project.progress).coerceIn(0, 100)
     val status = project.projectStatus()
-    val todayEntry = entries.firstOrNull { it.date == today }
+    val todayEntry = entries.firstOrNull { it.date == today && !it.auto }
     AppCard(Modifier.fillMaxWidth(), onClick = onClick) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {

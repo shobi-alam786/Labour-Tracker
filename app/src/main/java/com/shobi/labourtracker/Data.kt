@@ -50,6 +50,10 @@ interface AppDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun saveUpdate(u: DailyUpdate)
 
+    // Used by the 9:30 check to add the automatic zero-labour row. IGNORE = it can never overwrite a real update.
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertUpdateIfAbsent(u: DailyUpdate): Long
+
     @Query("SELECT * FROM projects WHERE block = :block ORDER BY subBlock")
     fun projects(block: String): Flow<List<Project>>
 
@@ -160,5 +164,6 @@ fun DailyUpdate.toEntry(p: Project) = DailyEntry(
     activity = p.activity,
     skilled = skilled,
     unskilled = unskilled,
-    progress = progress
+    progress = progress,
+    auto = status.equals(StatusRules.AUTO_ZERO_STATUS, ignoreCase = true)
 )

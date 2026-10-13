@@ -54,7 +54,7 @@ fun DashboardScreen(
     val ongoing = projects.count { it.projectStatus() == ProjectStatus.Ongoing }
     val completed = projects.count { it.projectStatus() == ProjectStatus.Completed }
     val active = projects.filter { StatusRules.isActive(it, today) }
-    val updatedCodes = todayEntries.map { it.drrCode }.toSet()
+    val updatedCodes = todayEntries.filter { !it.auto }.map { it.drrCode }.toSet()
     val updatedToday = active.count { it.drrCode in updatedCodes }
     val byCode = entries.groupBy { it.drrCode }
     val needUpdate = projects.filter { it.projectStatus() == ProjectStatus.Pending }

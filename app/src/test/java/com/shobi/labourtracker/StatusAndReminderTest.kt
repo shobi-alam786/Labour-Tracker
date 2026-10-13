@@ -123,4 +123,17 @@ class StatusAndReminderTest {
         assertFalse(Updater.isNewer("1.2", "1.2.0"))
         assertFalse(Updater.isNewer("1.0", "1.1"))
     }
+
+    @Test fun automaticZeroRowIsNotARealUpdate() {
+        val auto = update("A", sunday, "Pending")          // row created by the 9:30 check (0 labour)
+        val real = update("B", sunday, "Ongoing")
+        assertTrue(StatusRules.isAutoZero(auto))
+        assertFalse(StatusRules.isAutoZero(real))
+        assertEquals(setOf("B"), StatusRules.codesUpdatedOn(listOf(auto, real), sunday))
+        // so project A stays Pending and is still listed as missing
+        val plan = StatusRules.plan(listOf(project("A", "Pending"), project("B", "Pending")),
+            StatusRules.codesUpdatedOn(listOf(auto, real), sunday), sunday, true)
+        assertTrue(plan.toPending.isEmpty())
+        assertEquals(listOf("B"), plan.toOngoing.map { it.drrCode })
+    }
 }
