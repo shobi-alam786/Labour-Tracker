@@ -31,7 +31,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 
-private fun Context.findComponentActivity(): ComponentActivity? {
+internal fun Context.findComponentActivity(): ComponentActivity? {
     var c: Context = this
     while (c is ContextWrapper) {
         if (c is ComponentActivity) return c
@@ -73,6 +73,7 @@ fun ReminderScreen() {
     val notifOk = remember(tick) { ReminderHealth.notificationsAllowed(ctx) }
     val exactOk = remember(tick) { ReminderHealth.exactAlarmsAllowed(ctx) }
     val batteryOk = remember(tick) { ReminderHealth.batteryUnrestricted(ctx) }
+    val soundIssue = remember(tick) { ReminderNotifier.soundProblem(ctx) }
     val next = remember(tick, enabled) { AppTime.nextReminder(AppTime.now()) }
     val nextText = remember(next) { next.format(DateTimeFormatter.ofPattern("EEEE, dd MMM yyyy 'at' h:mm a", Locale.ENGLISH)) }
 
@@ -152,6 +153,21 @@ fun ReminderScreen() {
             actionLabel = "Open"
         ) {
             ctx.openSettings(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+        }
+
+        if (soundIssue != null) {
+            MessageBanner(BannerKind.Error, "$soundIssue Open the sound settings below, choose a sound and set importance to High / Pop on screen.")
+            Button(
+                onClick = {
+                    ctx.openSettings(
+                        Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS)
+                            .putExtra(Settings.EXTRA_APP_PACKAGE, ctx.packageName)
+                            .putExtra(Settings.EXTRA_CHANNEL_ID, ReminderNotifier.CHANNEL_ID)
+                    )
+                },
+                modifier = Modifier.fillMaxWidth().height(52.dp),
+                shape = RoundedCornerShape(16.dp)
+            ) { Text("Open sound settings") }
         }
 
         OutlinedButton(

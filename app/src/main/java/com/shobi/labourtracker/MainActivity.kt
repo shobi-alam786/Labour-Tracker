@@ -115,14 +115,28 @@ fun App() {
 
     // Every time the app opens for a logged-in block: keep exactly one 9:30 alarm scheduled, fix statuses
     // that were saved before this version, and (silently) catch up if the 9:30 check was missed.
-    LaunchedEffect(b) {
+    // Runs when the app opens, every time it comes back to the screen, and every 5 minutes while it is open,
+    // so the 9:30 rule (Pending + automatic 0-labour row) also applies if the alarm was delayed or blocked.
+    var resumeTick by remember { mutableStateOf(0) }
+    DisposableEffect(ctx) {
+        val activity = ctx.findComponentActivity()
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) resumeTick++
+        }
+        activity?.lifecycle?.addObserver(observer)
+        onDispose { activity?.lifecycle?.removeObserver(observer) }
+    }
+    LaunchedEffect(b, resumeTick) {
         ReminderScheduler.scheduleNext(ctx)
         StatusEngine.backfillCompletedOnce(dao, prefs)
-        val check = StatusEngine.runDailyCheck(dao, b, AppTime.now())
-        if (check.created > 0) syncAll(dao, b)   // send the automatic 0-labour rows
         if (ReminderHealth.needsNotificationPermission(ctx) && !ReminderPrefs.notificationAsked(ctx)) {
             ReminderPrefs.setNotificationAsked(ctx)
             notifLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+        while (true) {
+            val check = StatusEngine.runDailyCheck(dao, b, AppTime.now())
+            if (check.created > 0) syncAll(dao, b)   // send the automatic 0-labour rows
+            kotlinx.coroutines.delay(5 * 60 * 1000L)
         }
     }
 

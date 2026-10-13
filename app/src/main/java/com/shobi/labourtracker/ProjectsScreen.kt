@@ -64,7 +64,7 @@ fun ProjectsScreen(
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
                 shape = RoundedCornerShape(16.dp),
-                placeholder = { Text("Search DRR-Code, Sub-Block") },
+                placeholder = { Text("Search DRR-Code, sub-block or activity") },
                 leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
                 trailingIcon = {
                     if (query.isNotEmpty()) {

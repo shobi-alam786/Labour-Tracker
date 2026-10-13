@@ -105,7 +105,7 @@ object ProjectUpdateMessage {
     private fun two(n: Int) = String.format(Locale.ENGLISH, "%02d", n)
     private fun show(s: String) = runCatching { LocalDate.parse(s).format(fmt) }.getOrDefault(s)
 
-    private class Row(val p: Project, val progress: Int, val done: Boolean, val endDate: String, val skilled: Int, val unskilled: Int)
+    private class Row(val p: Project, val progress: Int, val done: Boolean, val endDate: String, val skilled: Int, val unskilled: Int, val pending: Boolean)
 
     fun build(date: LocalDate, projects: List<Project>, entries: List<DailyEntry>): String {
         val by = entries.groupBy { it.drrCode }
@@ -126,19 +126,21 @@ object ProjectUpdateMessage {
             } else null
             // A project that finished more than 7 days ago is no longer listed
             if (doneDate != null && doneDate.isBefore(date.minusDays(7)) && today.isEmpty()) return@mapNotNull null
-            Row(p, progress, done, doneDate?.format(fmt) ?: "", today.sumOf { it.skilled }, today.sumOf { it.unskilled })
+            // Pending = no real update for this date (a missing day or the automatic 0-labour row of the 9:30 check)
+            val pending = !done && today.none { !it.auto }
+            Row(p, progress, done, doneDate?.format(fmt) ?: "", today.sumOf { it.skilled }, today.sumOf { it.unskilled }, pending)
         }.sortedWith(compareBy({ it.p.subBlock }, { it.p.startDate }))
 
         val sb = StringBuilder()
         sb.append("📋 DAILY PROJECT UPDATE\n📅 Date: ${date.format(fmt)}\n\n$LINE\n\n")
         rows.forEachIndexed { i, r ->
-            sb.append("${two(i + 1)}. ${r.p.activity} ${if (r.done) "✅" else "🟡"}\n")
+            sb.append("${two(i + 1)}. ${r.p.activity} ${if (r.done) "✅" else if (r.pending) "🔴" else "🟡"}\n")
             sb.append("📌 DRR: ${r.p.drrCode}\n")
             sb.append("📍 S-Block: ${r.p.subBlock}\n")
             sb.append("📅 Start: ${show(r.p.startDate)}\n")
             if (r.done) sb.append("📅 End: ${r.endDate}\n")
             sb.append("📊 Progress: ${two(r.progress)}%\n")
-            sb.append(if (r.done) "🟢 Status: Completed\n" else "🟡 Status: Ongoing\n")
+            sb.append(if (r.done) "🟢 Status: Completed\n" else if (r.pending) "🔴 Status: Pending\n" else "🟡 Status: Ongoing\n")
             sb.append("👷 Skilled: ${two(r.skilled)} | Unskilled: ${two(r.unskilled)} | Total: ${two(r.skilled + r.unskilled)}\n")
             sb.append("\n$LINE\n\n")
         }
@@ -146,7 +148,7 @@ object ProjectUpdateMessage {
         val s = rows.sumOf { it.skilled }
         val u = rows.sumOf { it.unskilled }
         sb.append("📊 WORKFORCE SUMMARY\n\n👷 Skilled: ${two(s)}\n👷 Unskilled: ${two(u)}\n👥 Total: ${two(s + u)}\n\n")
-        sb.append("🟢 Completed: ${two(rows.count { it.done })}\n🟡 Ongoing: ${two(rows.count { !it.done })}\n$LINE")
+        sb.append("🟢 Completed: ${two(rows.count { it.done })}\n🟡 Ongoing: ${two(rows.count { !it.done && !it.pending })}\n🔴 Pending: ${two(rows.count { it.pending })}\n$LINE")
         return sb.toString()
     }
 }

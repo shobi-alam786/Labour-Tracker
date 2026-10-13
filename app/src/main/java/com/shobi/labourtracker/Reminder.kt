@@ -179,13 +179,15 @@ object ReminderRunner {
 // Notification (with sound)
 // ---------------------------------------------------------------------------
 object ReminderNotifier {
-    // The sound of a channel is fixed when it is created, hence a versioned id.
-    const val CHANNEL_ID = "daily_update_reminder_v1"
+    // The sound of a channel is fixed when it is created (and the phone may silence it), hence a versioned id.
+    const val CHANNEL_ID = "daily_update_reminder_v2"
+    private const val OLD_CHANNEL_ID = "daily_update_reminder_v1"
     private const val NOTIFICATION_ID = 9302
     private const val MAX_LISTED = 8
 
     fun ensureChannel(ctx: Context) {
         val nm = ctx.applicationContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        nm.deleteNotificationChannel(OLD_CHANNEL_ID)   // the first version had no reliable sound
         if (nm.getNotificationChannel(CHANNEL_ID) != null) return
         val channel = NotificationChannel(CHANNEL_ID, "Daily update reminder", NotificationManager.IMPORTANCE_HIGH).apply {
             description = "Reminds you at 9:30 AM when a project has no labour update for today."
@@ -218,10 +220,11 @@ object ReminderNotifier {
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setCategory(NotificationCompat.CATEGORY_REMINDER)
             .setAutoCancel(true)
-            .setOnlyAlertOnce(true)
             .setContentIntent(open)
             .build()
-        // Fixed id: a second post REPLACES the first one instead of stacking a duplicate.
+        // Fixed id, so there is never a stack of duplicates. The old one is removed first: replacing a notification
+        // that is still in the shade would make Android stay silent.
+        nmc.cancel(NOTIFICATION_ID)
         nmc.notify(NOTIFICATION_ID, n)
     }
 
@@ -234,6 +237,20 @@ object ReminderNotifier {
         val title = if (missing.size == 1) "1 project needs today's labour update"
         else "${missing.size} projects need today's labour update"
         post(ctx, title, list, "Missing today's update:\n$list\n\nOpen Labour Tracker and record skilled / unskilled workers.")
+    }
+
+    // Why the reminder might be silent on this phone (null = nothing found).
+    fun soundProblem(ctx: Context): String? {
+        val app = ctx.applicationContext
+        ensureChannel(app)
+        val nm = app.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val ch = nm.getNotificationChannel(CHANNEL_ID) ?: return null
+        if (ch.importance == NotificationManager.IMPORTANCE_NONE) return "The reminder channel is switched off in Android settings."
+        if (ch.importance < NotificationManager.IMPORTANCE_DEFAULT) return "The reminder is set to silent in Android settings."
+        if (ch.sound == null) return "No sound is selected for the reminder in Android settings."
+        val am = app.getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
+        if (am.ringerMode != android.media.AudioManager.RINGER_MODE_NORMAL) return "The phone is on silent or vibrate."
+        return null
     }
 
     fun showTest(ctx: Context) {
