@@ -223,7 +223,7 @@ fun App() {
                     saveThen { dao.saveProject(p) }
                     screen = "menu"
                 }
-                "update" -> DailyUpdateScreen(projects, entries.filter { it.date == AppTime.today() && !it.auto }.map { it.drrCode }.toSet()) { u, p ->
+                "update" -> DailyUpdateScreen(projects, entries.filter { it.date == AppTime.today() && !it.auto }.map { it.drrCode }.toSet(), entries) { u, p ->
                     saveThen {
                         if (p != null) StatusEngine.saveProjectKeepingStatus(dao, p)
                         val latestBefore = dao.latestUpdateDate(u.drrCode)   // read BEFORE saving
@@ -326,7 +326,7 @@ fun LoginScreen(dao: AppDao, onLogin: (String) -> Unit, onAdmin: () -> Unit) {
 }
 
 @Composable
-fun DailyUpdateScreen(projects: List<Project>, updatedToday: Set<String>, onSave: (DailyUpdate, Project?) -> Unit) {
+fun DailyUpdateScreen(projects: List<Project>, updatedToday: Set<String>, entries: List<DailyEntry>, onSave: (DailyUpdate, Project?) -> Unit) {
     if (projects.isEmpty()) {
         Column(
             Modifier.fillMaxSize().padding(24.dp),
@@ -455,7 +455,9 @@ fun DailyUpdateScreen(projects: List<Project>, updatedToday: Set<String>, onSave
 
             DateField("DATE", date, { date = it; error = "" }, note = dateNote(date))
 
-            // Progress card
+            // Progress card. "Earlier" = the project's latest progress recorded before the chosen date.
+            val earlier = entries.filter { it.drrCode == selected.drrCode && it.date.isBefore(date) }
+                .maxByOrNull { it.date }?.progress ?: 0
             Surface(shape = RoundedCornerShape(22.dp), color = MaterialTheme.colorScheme.surfaceContainerLow, tonalElevation = 1.dp) {
                 Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -469,18 +471,19 @@ fun DailyUpdateScreen(projects: List<Project>, updatedToday: Set<String>, onSave
                             modifier = Modifier.width(88.dp),
                             singleLine = true,
                             keyboardOptions = numberKeyboard,
+                            placeholder = { Text("$earlier") },
                             suffix = { Text("%") }
                         )
                     }
                     val progress = progressText.toIntOrNull()?.coerceIn(0, 100) ?: 0
                     LinearProgressIndicator(
-                        progress = { progress / 100f },
+                        progress = { (if (progressText.isEmpty()) earlier else progress) / 100f },
                         modifier = Modifier.fillMaxWidth().height(10.dp),
                         trackColor = MaterialTheme.colorScheme.surfaceVariant
                     )
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                         Text("0%", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text("Current: $progress%", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                        Text(if (progressText.isEmpty()) "Earlier: $earlier%" else "Earlier: $earlier%  →  New: $progress%", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                         Text("100%", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
