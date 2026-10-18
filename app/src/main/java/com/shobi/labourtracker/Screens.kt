@@ -23,6 +23,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
@@ -222,9 +223,13 @@ private fun WorkforceMetric(label: String, value: Int) {
 private fun StatusCard(status: ProjectStatus, count: Int, modifier: Modifier, onClick: () -> Unit) {
     val (bg, fg) = StatusStyle.colors(status)
     Surface(onClick = onClick, modifier = modifier, shape = RoundedCornerShape(20.dp), color = bg) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(count.toString(), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, color = fg)
-            Text(status.label, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold, color = fg)
+        Column(
+            Modifier.fillMaxWidth().padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(count.toString(), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, color = fg, textAlign = TextAlign.Center)
+            Text(status.label, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold, color = fg, textAlign = TextAlign.Center)
         }
     }
 }
@@ -238,13 +243,17 @@ private fun ActionCard(icon: ImageVector, title: String, subtitle: String, onCli
         color = MaterialTheme.colorScheme.surfaceContainerLow,
         tonalElevation = 1.dp
     ) {
-        Column(Modifier.fillMaxSize().padding(14.dp), verticalArrangement = Arrangement.SpaceBetween) {
+        Column(
+            Modifier.fillMaxSize().padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterVertically),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
             Surface(shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.primaryContainer) {
                 Icon(icon, contentDescription = null, modifier = Modifier.padding(10.dp), tint = MaterialTheme.colorScheme.onPrimaryContainer)
             }
-            Column {
-                Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, maxLines = 1)
-                Text(subtitle, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, maxLines = 1, textAlign = TextAlign.Center)
+                Text(subtitle, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, textAlign = TextAlign.Center)
             }
         }
     }
